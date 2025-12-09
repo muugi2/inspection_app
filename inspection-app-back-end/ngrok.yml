@@ -1,0 +1,10 @@
+version: "2"
+authtoken: 36ECeazHvj2TrKEJfccw4v0rt22_64XBVdWVyrpKdhPeYUbB3
+region: us
+tunnels:
+  backend:
+    proto: http
+    addr: backend:3000
+    inspect: true
+
+

@@ -60,7 +60,7 @@ const upload = multer({
 
 // FTP storage path (local folder serving as FTP directory)
 const FTP_STORAGE_PATH = process.env.FTP_STORAGE_PATH || path.resolve('C:/ftp_data');
-const FTP_PUBLIC_BASE_URL = process.env.FTP_PUBLIC_BASE_URL || 'http://192.168.0.6:4555/uploads';
+const FTP_PUBLIC_BASE_URL = process.env.FTP_PUBLIC_BASE_URL || 'http://192.168.1.71:4555/uploads';
 
 // Ensure FTP storage directory exists
 if (!fsSync.existsSync(FTP_STORAGE_PATH)) {

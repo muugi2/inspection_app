@@ -3,12 +3,35 @@ import axios from 'axios';
 // API Configuration
 // Use NEXT_PUBLIC_API_URL environment variable or fallback to default
 // For production, set NEXT_PUBLIC_API_URL in .env.local file
-// Example: NEXT_PUBLIC_API_URL=http://192.168.0.6:4555
+// Example: NEXT_PUBLIC_API_URL=http://192.168.1.71:4555
+function getApiBaseUrl(): string {
+  // Check if NEXT_PUBLIC_API_URL is set (highest priority)
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  
+  // Check if we're in browser (client-side)
+  if (typeof window !== 'undefined') {
+    // Client-side: use current hostname to determine API URL
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:4555';
+    }
+    // Use server IP for network access
+    return 'http://192.168.1.71:4555';
+  }
+  
+  // Server-side: check NODE_ENV
+  if (process.env.NODE_ENV === 'production') {
+    return 'http://192.168.1.71:4555';
+  }
+  
+  // Default to localhost for development
+  return 'http://localhost:4555';
+}
+
 export const API_CONFIG = {
-  BASE_URL: process.env.NEXT_PUBLIC_API_URL || 
-    (process.env.NODE_ENV === 'production' 
-      ? 'http://192.168.0.6:4555'  // Default production IP
-      : 'http://localhost:4555'),   // Development
+  BASE_URL: getApiBaseUrl(),
   TIMEOUT: 10000,
 };
 
@@ -134,6 +157,7 @@ export const API_ENDPOINTS = {
   REPORTS: {
     ANSWER_PREVIEW: '/api/documents/answers/:id/preview',
     ANSWER_DOCX: '/api/documents/answers/:id/docx',
+    MONTHLY_REPORT: '/api/documents/sites/:siteId/monthly-report',
   },
 };
 
@@ -579,6 +603,34 @@ export const apiService = {
             throw parsedError;
           } catch (parseError) {
             // If parsing fails, throw original error
+            throw error;
+          }
+        }
+        throw error;
+      }
+    },
+
+    downloadMonthlyReport: async (siteId: string, year: number, month: number) => {
+      const url = API_ENDPOINTS.REPORTS.MONTHLY_REPORT.replace(':siteId', siteId);
+      try {
+        const response = await apiClient.get(url, {
+          params: { year, month },
+          responseType: 'blob',
+        });
+        return response.data;
+      } catch (error: any) {
+        // If error response is a blob (JSON error message), parse it
+        if (error.response?.data instanceof Blob && error.response.data.type === 'application/json') {
+          const text = await error.response.data.text();
+          try {
+            const errorData = JSON.parse(text);
+            const parsedError = new Error(errorData.message || errorData.error || 'Failed to download monthly report');
+            (parsedError as any).response = {
+              ...error.response,
+              data: errorData,
+            };
+            throw parsedError;
+          } catch (parseError) {
             throw error;
           }
         }

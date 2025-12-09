@@ -66,6 +66,8 @@ async function loadImagesForAnswer(prisma, answerId) {
 
     const payload = await loadImagePayload(normalizedPath);
     console.log(`[report-service] Image payload loaded:`, {
+      hasBuffer: !!payload.buffer,
+      bufferLength: payload.buffer?.length,
       hasBase64: !!payload.base64,
       base64Length: payload.base64?.length,
       size: payload.size,
@@ -73,12 +75,15 @@ async function loadImagesForAnswer(prisma, answerId) {
       error: payload.error,
     });
 
-    if (!payload.base64) {
-      console.error(`[report-service] ❌ Failed to load image payload for: ${normalizedPath}`, {
-        error: payload.error,
-        localPath: payload.localPath,
-      });
-      // Continue anyway - will create image object without base64
+    if (!payload.buffer && !payload.base64) {
+      console.error(
+        `[report-service] ❌ Failed to load image payload for: ${normalizedPath}`,
+        {
+          error: payload.error,
+          localPath: payload.localPath,
+        }
+      );
+      // Continue anyway - will create image object without image data
     }
 
     const mimeType = inferMimeType(normalizedPath);
@@ -91,7 +96,9 @@ async function loadImagesForAnswer(prisma, answerId) {
       order: Number(row.image_order) || 0,
       imageUrl: buildPublicUrl(normalizedPath),
       storagePath: normalizedPath,
-      base64: payload.base64,
+      // Prefer binary buffer for DOCX generation; keep base64 for APIs that still use it
+      buffer: payload.buffer || null,
+      base64: payload.base64 || null,
       mimeType,
       uploadedAt: row.uploaded_at || null,
     };
@@ -100,6 +107,7 @@ async function loadImagesForAnswer(prisma, answerId) {
       id: imageObj.id,
       section: imageObj.section,
       fieldId: imageObj.fieldId,
+      hasBuffer: !!imageObj.buffer,
       hasBase64: !!imageObj.base64,
       mimeType: imageObj.mimeType,
     });
@@ -107,70 +115,165 @@ async function loadImagesForAnswer(prisma, answerId) {
     images.push(imageObj);
   }
 
-  console.log(`[report-service] ✅ Loaded ${images.length} images (${images.filter(img => img.base64).length} with base64)`);
+  console.log(
+    `[report-service] ✅ Loaded ${images.length} images (${images.filter(img => img.buffer).length} with buffer, ${images.filter(img => img.base64).length} with base64)`
+  );
   return images;
 }
 
 function mapIndicatorSection(section = {}) {
-  return {
-    led_display: safeField(section, 'led_display'),
-    power_plug: safeField(section, 'power_plug'),
-    seal_bolt: safeField(section, 'seal_bolt'),
-    buttons: safeField(section, 'buttons'),
-    junction_wiring: safeField(section, 'junction_wiring'),
-    serial_converter_plug: safeField(section, 'serial_converter'),
-  };
+  // Template-defined fields for indicator section
+  const allowedFields = ['led_display', 'power_plug', 'seal_bolt', 'buttons', 'junction_wiring', 'serial_converter', 'battery'];
+  
+  // Debug: Check serial_converter data
+  console.log('[report-service] mapIndicatorSection - serial_converter data:', {
+    hasSerialConverter: !!section.serial_converter,
+    serialConverterValue: section.serial_converter,
+    sectionKeys: Object.keys(section),
+  });
+  
+  const mapped = {};
+  allowedFields.forEach(field => {
+    // Template uses d.indicator.serial_converter.status, so keep serial_converter as is
+    // Also add serial_converter_plug for backward compatibility with frontend
+    if (field === 'serial_converter') {
+      const serialConverterData = safeField(section, 'serial_converter');
+      // Keep original name for template compatibility
+      mapped['serial_converter'] = serialConverterData;
+      // Also add serial_converter_plug for frontend display compatibility
+      mapped['serial_converter_plug'] = serialConverterData;
+      console.log('[report-service] mapIndicatorSection - mapped serial_converter (both names):', serialConverterData);
+    } else {
+      mapped[field] = safeField(section, field);
+    }
+  });
+  
+  // Include any other fields from database
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  Object.keys(section).forEach(key => {
+    if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
+      const value = section[key];
+      if (value !== null && value !== undefined) {
+        mapped[key] = safeField(section, key);
+      }
+    }
+  });
+  
+  console.log('[report-service] mapIndicatorSection - final mapped keys:', Object.keys(mapped));
+  console.log('[report-service] mapIndicatorSection - serial_converter in mapped:', mapped.serial_converter);
+  console.log('[report-service] mapIndicatorSection - serial_converter_plug in mapped:', mapped.serial_converter_plug);
+  
+  return mapped;
 }
 
 function mapFoundationSection(section = {}) {
-  return {
-    cross_base: safeField(section, 'cross_base'),
-    anchor_plate: safeField(section, 'anchor_plate'),
-    ramp_angle: safeField(section, 'ramp_angle'),
-    ramp_stopper: safeField(section, 'ramp_stopper'),
-    ramp: safeField(section, 'ramp'),
-    slab_base: safeField(section, 'slab_base'),
-  };
+  const allowedFields = ['cross_base', 'anchor_plate', 'ramp_angle', 'ramp_stopper', 'ramp', 'slab_base', 'sensor_base'];
+  
+  const mapped = {};
+  allowedFields.forEach(field => {
+    mapped[field] = safeField(section, field);
+  });
+  
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  Object.keys(section).forEach(key => {
+    if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
+      const value = section[key];
+      if (value !== null && value !== undefined) {
+        mapped[key] = safeField(section, key);
+      }
+    }
+  });
+  
+  return mapped;
 }
 
 function mapCleanlinessSection(section = {}) {
-  return {
-    under_platform: safeField(section, 'under_platform'),
-    top_platform: safeField(section, 'top_platform'),
-    gap_platform_ramp: safeField(section, 'gap_platform_ramp'),
-    both_sides_area: safeField(section, 'both_sides_area'),
-  };
+  const allowedFields = ['under_platform', 'top_platform', 'gap_platform_ramp', 'both_sides_area'];
+  
+  const mapped = {};
+  allowedFields.forEach(field => {
+    mapped[field] = safeField(section, field);
+  });
+  
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  Object.keys(section).forEach(key => {
+    if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
+      const value = section[key];
+      if (value !== null && value !== undefined) {
+        mapped[key] = safeField(section, key);
+      }
+    }
+  });
+  
+  return mapped;
 }
 
 function mapExteriorSection(section = {}) {
-  return {
-    sensor_base: safeField(section, 'sensor_base'),
-    beam: safeField(section, 'beam'),
-    platform_plate: safeField(section, 'platform_plate'),
-    beam_joint_plate: safeField(section, 'beam_joint_plate'),
-    stop_bolt: safeField(section, 'stop_bolt'),
-    interplatform_bolts: safeField(section, 'interplatform_bolts'),
-  };
+  // Template-defined fields for exterior section
+  const allowedFields = ['platform_plate', 'beam_joint_plate', 'stop_bolt', 'interplatform_bolts'];
+  
+  // Start with template-defined fields
+  const mapped = {};
+  allowedFields.forEach(field => {
+    mapped[field] = safeField(section, field);
+  });
+  
+  // Also include any other fields from database (for template flexibility)
+  // Filter out metadata and non-field keys
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  Object.keys(section).forEach(key => {
+    if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
+      // Include new fields that might have been added to template
+      const value = section[key];
+      if (value !== null && value !== undefined) {
+        mapped[key] = safeField(section, key);
+      }
+    }
+  });
+  
+  return mapped;
 }
 
 function mapJboxSection(section = {}) {
-  return {
-    box_integrity: safeField(section, 'box_integrity'),
-    collector_board: safeField(section, 'collector_board'),
-    wire_tightener: safeField(section, 'wire_tightener'),
-    resistor_element: safeField(section, 'resistor_element'),
-    protective_box: safeField(section, 'protective_box'),
-  };
+  const allowedFields = ['box_integrity', 'collector_board', 'wire_tightener', 'resistor_element', 'protective_box'];
+  
+  const mapped = {};
+  allowedFields.forEach(field => {
+    mapped[field] = safeField(section, field);
+  });
+  
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  Object.keys(section).forEach(key => {
+    if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
+      const value = section[key];
+      if (value !== null && value !== undefined) {
+        mapped[key] = safeField(section, key);
+      }
+    }
+  });
+  
+  return mapped;
 }
 
 function mapSensorSection(section = {}) {
-  return {
-    signal_wire: safeField(section, 'signal_wire'),
-    ball: safeField(section, 'ball'),
-    base: safeField(section, 'base'),
-    ball_cup_thin: safeField(section, 'ball_cup_thin'),
-    plate: safeField(section, 'plate'),
-  };
+  const allowedFields = ['signal_wire', 'ball', 'base', 'ball_cup_thin', 'plate'];
+  
+  const mapped = {};
+  allowedFields.forEach(field => {
+    mapped[field] = safeField(section, field);
+  });
+  
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  Object.keys(section).forEach(key => {
+    if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
+      const value = section[key];
+      if (value !== null && value !== undefined) {
+        mapped[key] = safeField(section, key);
+      }
+    }
+  });
+  
+  return mapped;
 }
 
 async function buildInspectionReportData(

@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H localhost",
+    "dev:network": "next dev",
     "build": "next build",
-    "start": "next start",
+    "postbuild": "node scripts/copy-static.js",
+    "start": "node scripts/start.js",
+    "start:standalone": "node .next/standalone/server.js",
+    "start:next": "next start",
     "lint": "eslint"
   },
   "dependencies": {

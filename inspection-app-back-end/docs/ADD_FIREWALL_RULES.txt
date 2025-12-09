@@ -43,7 +43,7 @@ netsh advfirewall firewall show rule name="Docker FTP Passive"
 
 Termux дээр:
 
-ftp 192.168.0.7
+ftp 192.168.1.71
 
 Username: test
 Password: 1234

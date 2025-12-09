@@ -12,10 +12,6 @@ RUN npm ci --only=production
 # Copy application code
 COPY . .
 
-# Copy entrypoint script
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
 # Generate Prisma Client
 RUN npx prisma generate
 
@@ -37,8 +33,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node healthcheck.js
 
-# Use entrypoint script
-ENTRYPOINT ["docker-entrypoint.sh"]
-
-# Start the application
+# Start the application directly (without entrypoint script)
 CMD ["npm", "start"]

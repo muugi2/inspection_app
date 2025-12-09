@@ -32,9 +32,10 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   Map<String, dynamic>?
   _template; // expecting { name, questions: [{title, fields:[...]}, ...] }
   List<Map<String, dynamic>> _sections = const [];
-  
+
   // ===== INSPECTION INFO =====
-  Map<String, dynamic>? _inspectionInfo; // Үзлэгийн мэдээлэл (scheduleType-ийг авах)
+  Map<String, dynamic>?
+  _inspectionInfo; // Үзлэгийн мэдээлэл (scheduleType-ийг авах)
 
   // ===== PAGINATION & NAVIGATION =====
   int _currentSection = 0;
@@ -55,6 +56,12 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   final Map<String, String> _fieldTextByKey = {}; // extra text if required
   final Map<String, bool> _fieldHasImageByKey = {}; // image flag if required
   final Map<String, List<File>> _fieldImagesByKey = {}; // files per field
+
+  // ===== FIELD KEYS FOR SCROLLING =====
+  final Map<String, GlobalKey> _fieldKeys =
+      {}; // GlobalKey for each field to enable scrolling
+  String?
+  _highlightedFieldKey; // Key of the field that should be highlighted (for invalid fields)
 
   // ===== LIFECYCLE METHODS =====
   @override
@@ -150,7 +157,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       debugPrint('Inspection ID: ${widget.inspectionId}');
 
       // Use inspection-specific endpoint that includes device info
-      final response = await InspectionAPI.getDeviceDetails(widget.inspectionId);
+      final response = await InspectionAPI.getDeviceDetails(
+        widget.inspectionId,
+      );
 
       if (response is Map<String, dynamic>) {
         final data = response['data'];
@@ -166,7 +175,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
         }
       }
 
-      debugPrint('⚠️ No device found for inspection ID: ${widget.inspectionId}');
+      debugPrint(
+        '⚠️ No device found for inspection ID: ${widget.inspectionId}',
+      );
     } catch (e) {
       debugPrint('❌ Error loading device info: $e');
     }
@@ -252,7 +263,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   // ===== IMAGE HANDLING METHODS =====
   Future<void> _pickImageSource(int sIdx, int fIdx) async {
     final ImagePicker picker = ImagePicker();
-    
+
     try {
       final XFile? picked = await showModalBottomSheet<XFile?>(
         context: context,
@@ -269,37 +280,36 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   child: const Text(
                     'Зургийн эх үүсвэр сонгох',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                 ),
                 const Divider(height: 1),
                 // Camera option
                 ListTile(
                   leading: const Icon(Icons.photo_camera_outlined, size: 28),
-                  title: const Text(
-                    'Камер',
-                    style: TextStyle(fontSize: 16),
-                  ),
+                  title: const Text('Камер', style: TextStyle(fontSize: 16)),
                   subtitle: const Text('Камер ашиглан зураг авах'),
                   onTap: () async {
                     try {
                       Navigator.of(ctx).pop(); // Close bottom sheet first
-                      
+
                       // Check and request camera permission
-                      final PermissionStatus cameraStatus = await Permission.camera.status;
+                      final PermissionStatus cameraStatus =
+                          await Permission.camera.status;
                       debugPrint('Camera permission status: $cameraStatus');
-                      
+
                       if (!cameraStatus.isGranted) {
                         // Request permission
-                        final PermissionStatus requestResult = await Permission.camera.request();
-                        debugPrint('Camera permission request result: $requestResult');
-                        
+                        final PermissionStatus requestResult = await Permission
+                            .camera
+                            .request();
+                        debugPrint(
+                          'Camera permission request result: $requestResult',
+                        );
+
                         if (!requestResult.isGranted) {
                           if (!context.mounted) return;
-                          
+
                           // Show dialog to explain why permission is needed
                           await showDialog(
                             context: context,
@@ -311,7 +321,8 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                               ),
                               actions: [
                                 TextButton(
-                                  onPressed: () => Navigator.of(dialogContext).pop(),
+                                  onPressed: () =>
+                                      Navigator.of(dialogContext).pop(),
                                   child: const Text('Цуцлах'),
                                 ),
                                 TextButton(
@@ -327,14 +338,14 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                           return;
                         }
                       }
-                      
+
                       // Permission granted, proceed with camera
                       final XFile? x = await picker.pickImage(
                         source: ImageSource.camera,
                         imageQuality: 85,
                         preferredCameraDevice: CameraDevice.rear,
                       );
-                      
+
                       if (x != null && context.mounted) {
                         // Wait a bit before processing to ensure file is ready
                         await Future.delayed(const Duration(milliseconds: 100));
@@ -343,13 +354,14 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                     } catch (e) {
                       debugPrint('❌ Camera error: $e');
                       if (!context.mounted) return;
-                      
+
                       String errorMessage = 'Камер ашиглахад алдаа гарлаа';
-                      if (e.toString().contains('camera_access_denied') || 
+                      if (e.toString().contains('camera_access_denied') ||
                           e.toString().contains('permission')) {
-                        errorMessage = 'Камер эрх зөвшөөрөгдөөгүй. Тохиргоо дээр очиж эрх зөвшөөрнө үү.';
+                        errorMessage =
+                            'Камер эрх зөвшөөрөгдөөгүй. Тохиргоо дээр очиж эрх зөвшөөрнө үү.';
                       }
-                      
+
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(errorMessage),
@@ -378,7 +390,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                   onTap: () async {
                     try {
                       Navigator.of(ctx).pop(); // Close bottom sheet first
-                      
+
                       // Check and request photos permission (for Android 13+)
                       PermissionStatus photosStatus;
                       if (Platform.isAndroid) {
@@ -387,7 +399,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                         if (!photosStatus.isGranted) {
                           photosStatus = await Permission.photos.request();
                         }
-                        
+
                         // Fallback for older Android versions
                         if (!photosStatus.isGranted) {
                           photosStatus = await Permission.storage.status;
@@ -402,7 +414,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                           photosStatus = await Permission.photos.request();
                         }
                       }
-                      
+
                       if (!photosStatus.isGranted && !photosStatus.isLimited) {
                         if (!context.mounted) return;
                         await showDialog(
@@ -415,7 +427,8 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                             ),
                             actions: [
                               TextButton(
-                                onPressed: () => Navigator.of(dialogContext).pop(),
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(),
                                 child: const Text('Цуцлах'),
                               ),
                               TextButton(
@@ -423,19 +436,19 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                                   Navigator.of(dialogContext).pop();
                                   await openAppSettings();
                                 },
-                                  child: const Text('Тохиргоо'),
+                                child: const Text('Тохиргоо'),
                               ),
                             ],
                           ),
                         );
                         return;
                       }
-                      
+
                       final XFile? x = await picker.pickImage(
                         source: ImageSource.gallery,
                         imageQuality: 85,
                       );
-                      
+
                       if (x != null && context.mounted) {
                         await Future.delayed(const Duration(milliseconds: 100));
                         _processPickedImage(sIdx, fIdx, x);
@@ -443,13 +456,15 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                     } catch (e) {
                       debugPrint('❌ Gallery error: $e');
                       if (!context.mounted) return;
-                      
-                      String errorMessage = 'Зургийн сангаас сонгоход алдаа гарлаа';
-                      if (e.toString().contains('permission') || 
+
+                      String errorMessage =
+                          'Зургийн сангаас сонгоход алдаа гарлаа';
+                      if (e.toString().contains('permission') ||
                           e.toString().contains('access_denied')) {
-                        errorMessage = 'Зургийн сан эрх зөвшөөрөгдөөгүй. Тохиргоо дээр очиж эрх зөвшөөрнө үү.';
+                        errorMessage =
+                            'Зургийн сан эрх зөвшөөрөгдөөгүй. Тохиргоо дээр очиж эрх зөвшөөрнө үү.';
                       }
-                      
+
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(errorMessage),
@@ -495,7 +510,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   void _processPickedImage(int sIdx, int fIdx, XFile pickedFile) {
     try {
       final file = File(pickedFile.path);
-      
+
       // Verify file exists
       if (!file.existsSync()) {
         debugPrint('❌ Image file does not exist: ${pickedFile.path}');
@@ -514,7 +529,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       if (fileSize > maxSize) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Зургийн хэмжээ хэт том байна. 10MB-аас бага зураг сонгоно уу.'),
+            content: Text(
+              'Зургийн хэмжээ хэт том байна. 10MB-аас бага зураг сонгоно уу.',
+            ),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 3),
           ),
@@ -544,8 +561,10 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       });
 
       debugPrint('✅ Image added successfully: ${pickedFile.path}');
-      debugPrint('   File size: ${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB');
-      
+      debugPrint(
+        '   File size: ${(fileSize / 1024 / 1024).toStringAsFixed(2)} MB',
+      );
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -580,7 +599,11 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   }
 
   // Upload all images for current section
-  Future<void> _uploadSectionImages(String sectionName, String sectionTitle, String? answerId) async {
+  Future<void> _uploadSectionImages(
+    String sectionName,
+    String sectionTitle,
+    String? answerId,
+  ) async {
     if (answerId == null || answerId.isEmpty) {
       debugPrint('⚠️ Warning: answerId is null or empty, cannot upload images');
       return;
@@ -588,7 +611,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
 
     final section = _sections[_currentSection];
     final fields = (section['fields'] as List<dynamic>);
-    final String sectionKey = sectionName.isNotEmpty ? sectionName : sectionTitle;
+    final String sectionKey = sectionName.isNotEmpty
+        ? sectionName
+        : sectionTitle;
 
     for (int f = 0; f < fields.length; f++) {
       final field = fields[f] as Map<String, dynamic>;
@@ -599,7 +624,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
 
       if (images.isNotEmpty) {
         try {
-          debugPrint('📸 Uploading ${images.length} image(s) for field: $fieldId with answerId: $answerId');
+          debugPrint(
+            '📸 Uploading ${images.length} image(s) for field: $fieldId with answerId: $answerId',
+          );
           await InspectionAPI.uploadQuestionImages(
             inspectionId: widget.inspectionId,
             answerId: answerId,
@@ -736,7 +763,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       }
 
       // Fetch from inspection-specific endpoint
-      final response = await InspectionAPI.getDeviceDetails(widget.inspectionId);
+      final response = await InspectionAPI.getDeviceDetails(
+        widget.inspectionId,
+      );
       if (response is Map<String, dynamic>) {
         final data = response['data'];
         if (data is Map<String, dynamic>) {
@@ -806,10 +835,12 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
 
     // Үзлэгийн төрөл (scheduleType) харуулах - зөвхөн scheduleType-аас хамаарч харуулах
     String templateName = 'Үзлэг';
-    
+
     // Эхлээд inspectionInfo-аас scheduleType-ийг шалгах
     if (_inspectionInfo != null) {
-      final scheduleType = _inspectionInfo!['scheduleType']?.toString().toUpperCase();
+      final scheduleType = _inspectionInfo!['scheduleType']
+          ?.toString()
+          .toUpperCase();
       debugPrint('🔍 ScheduleType from inspectionInfo: $scheduleType');
       if (scheduleType == 'DAILY') {
         templateName = 'Өдөр тутмын үзлэг, шалгалт';
@@ -817,10 +848,10 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
         templateName = 'Хугацаат үзлэг';
       }
     }
-    
+
     // Хэрэв scheduleType олдохгүй бол зөвхөн "Үзлэг" гэж харуулах
     // Description эсвэл бусад fallback ашиглахгүй
-    
+
     final Map<String, dynamic> section = _sections[_currentSection];
     final String sectionTitle = (section['title'] ?? '').toString();
     final String sectionName = (section['section'] ?? '').toString();
@@ -879,13 +910,28 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
               final Set<int> selected =
                   _selectedOptionsByField[fKey] ?? <int>{};
               final String textValue = _fieldTextByKey[fKey] ?? '';
+
+              // Get or create GlobalKey for this field
+              if (!_fieldKeys.containsKey(fKey)) {
+                _fieldKeys[fKey] = GlobalKey();
+              }
+              final GlobalKey fieldKey = _fieldKeys[fKey]!;
+
+              // Check if this field should be highlighted (invalid field)
+              final bool isHighlighted = _highlightedFieldKey == fKey;
+
               return Padding(
+                key: fieldKey,
                 padding: const EdgeInsets.only(bottom: 12.0),
                 child: Card(
                   color: AppColors.surface,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
+                    side: isHighlighted
+                        ? const BorderSide(color: Colors.red, width: 2)
+                        : BorderSide.none,
                   ),
+                  elevation: isHighlighted ? 4 : 0,
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
                     child: Column(
@@ -912,7 +958,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                             title: Text(options[oIdx].toString()),
                             contentPadding: EdgeInsets.zero,
                           ),
-                        // Show text field if answer is not "Зүгээр" or "Цэвэр"
+                        // Show text field if answer is not "Зүгээр", "Цэвэр", or "Хэвийн"
                         if (_shouldShowTextField(selected, options))
                           Padding(
                             padding: const EdgeInsets.only(top: 8.0),
@@ -933,7 +979,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                               ),
                             ),
                           ),
-                        // Show image field if answer is not "Зүгээр" or "Цэвэр"
+                        // Show image field if answer is not "Зүгээр", "Цэвэр", or "Хэвийн"
                         if (_shouldShowImageField(selected, options))
                           Padding(
                             padding: const EdgeInsets.only(top: 8.0),
@@ -995,9 +1041,11 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                                   onPressed: () =>
                                       _pickImageSource(_currentSection, fIdx),
                                   icon: const Icon(Icons.add_a_photo_outlined),
-                                  label: Text((_fieldImagesByKey[fKey]?.length ?? 0) >= 1
-                                      ? 'Зураг солих'
-                                      : 'Зураг оруулах'),
+                                  label: Text(
+                                    (_fieldImagesByKey[fKey]?.length ?? 0) >= 1
+                                        ? 'Зураг солих'
+                                        : 'Зураг оруулах',
+                                  ),
                                 ),
                               ],
                             ),
@@ -1018,7 +1066,17 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                 child: OutlinedButton(
                   onPressed: _currentSection == 0
                       ? null
-                      : () => setState(() => _currentSection -= 1),
+                      : () {
+                          setState(() {
+                            _currentSection -= 1;
+                            // Scroll to top when going back
+                            _scrollController.animateTo(
+                              0,
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeInOut,
+                            );
+                          });
+                        },
                   child: const Text('Өмнөх'),
                 ),
               ),
@@ -1027,11 +1085,8 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                 child: ElevatedButton(
                   onPressed: () async {
                     if (!_validateSection(_currentSection)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Шаардлагатай талбаруудыг бөглөнө үү'),
-                        ),
-                      );
+                      // Scroll to first invalid field instead of showing SnackBar
+                      _scrollToFirstInvalidField(_currentSection);
                       return;
                     }
 
@@ -1064,24 +1119,20 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   bool _shouldShowTextField(Set<int> selected, List<dynamic> options) {
     if (selected.isEmpty) return false;
 
-    final selectedOption = options[selected.first].toString();
-    // Show text field if answer is NOT "Зүгээр", "Цэвэр", "Бүтэн", or "Саадгүй"
-    return !selectedOption.contains('Зүгээр') &&
-        !selectedOption.contains('Цэвэр') &&
-        !selectedOption.contains('Бүтэн') &&
-        !selectedOption.contains('Саадгүй');
+    final selectedOption = options[selected.first].toString().trim();
+    // Show text field if answer is NOT exactly "Хэвийн" or "Цэвэр"
+    // Note: "Цэвэрлэх" should show text field, only "Цэвэр" should not
+    return selectedOption != 'Хэвийн' && selectedOption != 'Цэвэр';
   }
 
   /// Check if image field should be shown based on selected answer
   bool _shouldShowImageField(Set<int> selected, List<dynamic> options) {
     if (selected.isEmpty) return false;
 
-    final selectedOption = options[selected.first].toString();
-    // Show image field if answer is NOT "Зүгээр", "Цэвэр", "Бүтэн", or "Саадгүй"
-    return !selectedOption.contains('Зүгээр') &&
-        !selectedOption.contains('Цэвэр') &&
-        !selectedOption.contains('Бүтэн') &&
-        !selectedOption.contains('Саадгүй');
+    final selectedOption = options[selected.first].toString().trim();
+    // Show image field if answer is NOT exactly "Хэвийн" or "Цэвэр"
+    // Note: "Цэвэрлэх" should show image field, only "Цэвэр" should not
+    return selectedOption != 'Хэвийн' && selectedOption != 'Цэвэр';
   }
 
   // ===== VALIDATION METHODS =====
@@ -1111,23 +1162,346 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
     return true;
   }
 
+  /// Find the first invalid field index in the current section
+  /// Returns -1 if all fields are valid
+  int _findFirstInvalidFieldIndex(int sIdx) {
+    final section = _sections[sIdx];
+    final fields = (section['fields'] as List<dynamic>);
+    for (int f = 0; f < fields.length; f++) {
+      final field = fields[f] as Map<String, dynamic>;
+      final String key = _fieldKey(sIdx, f);
+      final List<dynamic> options = (field['options'] as List<dynamic>);
+      final selected = _selectedOptionsByField[key] ?? <int>{};
+
+      if (selected.isEmpty) return f;
+
+      // Check if text is required based on selected answer
+      if (_shouldShowTextField(selected, options)) {
+        final txt = (_fieldTextByKey[key] ?? '').trim();
+        if (txt.isEmpty) return f;
+      }
+
+      // Check if image is required based on selected answer
+      if (_shouldShowImageField(selected, options)) {
+        final imgs = _fieldImagesByKey[key] ?? const <File>[];
+        if (imgs.isEmpty) return f;
+      }
+    }
+    return -1; // All fields are valid
+  }
+
+  /// Scroll to the first invalid field in the current section
+  void _scrollToFirstInvalidField(int sIdx) {
+    final invalidFieldIndex = _findFirstInvalidFieldIndex(sIdx);
+    if (invalidFieldIndex == -1) {
+      debugPrint('No invalid field found in section $sIdx');
+      setState(() {
+        _highlightedFieldKey = null;
+      });
+      return;
+    }
+
+    debugPrint(
+      'Scrolling to invalid field: section $sIdx, field $invalidFieldIndex',
+    );
+    final String fieldKey = _fieldKey(sIdx, invalidFieldIndex);
+
+    // Highlight the invalid field
+    setState(() {
+      _highlightedFieldKey = fieldKey;
+    });
+
+    // Remove highlight after 3 seconds
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _highlightedFieldKey = null;
+        });
+      }
+    });
+
+    // Ensure the key exists
+    if (!_fieldKeys.containsKey(fieldKey)) {
+      debugPrint('Creating GlobalKey for field: $fieldKey');
+      _fieldKeys[fieldKey] = GlobalKey();
+    }
+
+    final GlobalKey key = _fieldKeys[fieldKey]!;
+
+    // Wait for the widget to be built and rendered
+    // Use multiple post frame callbacks to ensure the widget is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Wait one more frame to ensure the widget is fully rendered
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _performScroll(key, fieldKey, sIdx);
+      });
+    });
+  }
+
+  /// Perform the actual scroll operation
+  /// [retryCount] tracks retry attempts to prevent infinite loops
+  void _performScroll(
+    GlobalKey key,
+    String fieldKey,
+    int sIdx, {
+    int retryCount = 0,
+  }) {
+    const int maxRetries = 3;
+
+    final BuildContext? context = key.currentContext;
+
+    // If context is null, the widget is not rendered yet (likely far away)
+    // First scroll to approximate position, then retry
+    if (context == null) {
+      if (retryCount >= maxRetries) {
+        debugPrint(
+          '❌ Max retries reached for field: $fieldKey, using fallback scroll',
+        );
+        // Final fallback: scroll to approximate position and stay there
+        _scrollToApproximatePosition(sIdx, fieldKey);
+        return;
+      }
+
+      debugPrint(
+        'Warning: BuildContext is null for field: $fieldKey (retry $retryCount/$maxRetries), scrolling to approximate position first...',
+      );
+      _scrollToApproximatePosition(sIdx, fieldKey);
+
+      // Wait for scroll animation to complete and widget to render
+      // Scroll animation takes 500ms, so wait a bit longer
+      Future.delayed(const Duration(milliseconds: 700), () {
+        if (mounted) {
+          // Wait for next frame to ensure widget is rendered
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              // Retry with incremented retry count
+              _performScroll(key, fieldKey, sIdx, retryCount: retryCount + 1);
+            }
+          });
+        }
+      });
+      return;
+    }
+
+    debugPrint('Scrolling to field: $fieldKey');
+
+    // Method 1: Use Scrollable.ensureVisible (most reliable for ListView.builder)
+    try {
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 700),
+        curve: Curves.easeInOut,
+        alignment: 0.1, // Scroll to show field near the top (10% from top)
+        alignmentPolicy:
+            ScrollPositionAlignmentPolicy.explicit, // Always scroll
+      );
+      debugPrint('✅ Successfully scrolled using ensureVisible: $fieldKey');
+      return;
+    } catch (e) {
+      debugPrint('⚠️ Scrollable.ensureVisible failed: $e');
+    }
+
+    // Method 2: Use ScrollController with RenderBox and proper coordinate calculation
+    if (_scrollController.hasClients) {
+      try {
+        final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
+        if (renderBox != null) {
+          // Get the position of the field relative to the screen
+          final Offset globalPosition = renderBox.localToGlobal(Offset.zero);
+
+          // Get the ListView's RenderBox to calculate relative position
+          final RenderObject? listViewRenderObject = _scrollController
+              .position
+              .context
+              .storageContext
+              .findRenderObject();
+          if (listViewRenderObject is RenderBox) {
+            final Offset listViewGlobalPosition = listViewRenderObject
+                .localToGlobal(Offset.zero);
+
+            // Calculate the field's position relative to the ListView
+            final double fieldTopRelativeToListView =
+                globalPosition.dy - listViewGlobalPosition.dy;
+
+            // Current scroll offset
+            final double currentScrollOffset = _scrollController.offset;
+
+            // Calculate target scroll position
+            // We want the field to be 100px from the top of the viewport
+            final double targetScrollPosition =
+                currentScrollOffset + fieldTopRelativeToListView - 100;
+
+            debugPrint(
+              'Scroll calculation: globalPos=${globalPosition.dy}, listViewPos=${listViewGlobalPosition.dy}, relative=$fieldTopRelativeToListView, current=$currentScrollOffset, target=$targetScrollPosition',
+            );
+
+            _scrollController.animateTo(
+              targetScrollPosition.clamp(
+                0.0,
+                _scrollController.position.maxScrollExtent,
+              ),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeInOut,
+            );
+            debugPrint(
+              '✅ Successfully scrolled using RenderBox calculation: $fieldKey',
+            );
+            return;
+          }
+        }
+      } catch (e2) {
+        debugPrint('❌ Error using RenderBox calculation: $e2');
+      }
+    }
+
+    debugPrint('❌ All scroll methods failed for field: $fieldKey');
+  }
+
+  /// Scroll to approximate position based on field index
+  /// This ensures the widget is rendered even if it's far away
+  void _scrollToApproximatePosition(int sIdx, String fieldKey) {
+    if (!_scrollController.hasClients) {
+      debugPrint('⚠️ ScrollController has no clients');
+      return;
+    }
+
+    try {
+      // Extract field index from fieldKey (format: "sectionIndex|fieldIndex")
+      final parts = fieldKey.split('|');
+      if (parts.length != 2) {
+        debugPrint('⚠️ Invalid fieldKey format: $fieldKey');
+        return;
+      }
+
+      final int invalidFieldIndex = int.tryParse(parts[1]) ?? -1;
+      if (invalidFieldIndex < 0) {
+        debugPrint('⚠️ Invalid field index: ${parts[1]}');
+        return;
+      }
+
+      // Calculate scroll position based on field index with improved height estimation
+      const double padding = 16.0; // ListView padding
+      const double fieldPadding =
+          12.0; // Padding between fields (bottom padding of Card)
+      const double questionHeight =
+          35.0; // Question text height (with some margin)
+      const double optionHeight = 48.0; // Height per option (RadioListTile)
+      const double cardPadding = 24.0; // Card padding (top + bottom = 12*2)
+      const double textFieldHeight = 88.0; // TextField with label and padding
+      const double imageFieldHeight =
+          140.0; // Image field with button and padding
+
+      // Estimate total height for each field up to the invalid one
+      double totalHeight = padding; // Start with ListView padding
+
+      final section = _sections[sIdx];
+      final fields = (section['fields'] as List<dynamic>);
+
+      for (int i = 0; i < invalidFieldIndex && i < fields.length; i++) {
+        final field = fields[i] as Map<String, dynamic>;
+        final String fKey = _fieldKey(sIdx, i);
+        final Set<int> selected = _selectedOptionsByField[fKey] ?? <int>{};
+        final List<dynamic> options = (field['options'] as List<dynamic>);
+
+        // Base height: question + card padding
+        double fieldHeight = questionHeight + cardPadding;
+
+        // Add height for each option (RadioListTile)
+        // Each option takes about 48px, plus spacing
+        fieldHeight += options.length * optionHeight;
+
+        // Add spacing between question and options
+        if (options.isNotEmpty) {
+          fieldHeight += 8.0; // SizedBox height between question and options
+        }
+
+        // Add height if text field is shown
+        if (_shouldShowTextField(selected, options)) {
+          fieldHeight += textFieldHeight;
+        }
+
+        // Add height if image field is shown
+        if (_shouldShowImageField(selected, options)) {
+          fieldHeight += imageFieldHeight;
+        }
+
+        // Add field padding (spacing between cards)
+        totalHeight += fieldHeight + fieldPadding;
+      }
+
+      // Scroll to slightly before the field to ensure it's fully visible
+      // Subtract a small amount to account for viewport positioning
+      totalHeight = (totalHeight - 100).clamp(0.0, double.infinity);
+
+      debugPrint(
+        'Calculated approximate scroll position: $totalHeight (field index: $invalidFieldIndex)',
+      );
+
+      // Scroll to approximate position first
+      _scrollController.animateTo(
+        totalHeight.clamp(0.0, _scrollController.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeInOut,
+      );
+
+      debugPrint('✅ Scrolled to approximate position');
+    } catch (e) {
+      debugPrint('❌ Error calculating approximate scroll position: $e');
+    }
+  }
+
   // ===== SECTION MANAGEMENT METHODS =====
 
   // Navigation methods
 
   void _onFinish() {
     debugPrint('=== _onFinish() called ===');
+    debugPrint(
+      'Current section: $_currentSection, Total sections: $_totalSections',
+    );
 
     if (_currentSection >= (_totalSections - 1)) {
       // Last section - show verification screen
+      debugPrint('Last section completed, showing verification screen');
       setState(() {
         _showVerification = true;
+        _showSectionReview = false;
+        _currentSectionAnswers = null;
       });
     } else {
       // Move to next section
+      debugPrint('Moving to next section: ${_currentSection + 1}');
       setState(() {
         _currentSection++;
+        _showSectionReview = false;
+        _currentSectionAnswers = null;
+        _highlightedFieldKey =
+            null; // Clear highlight when moving to next section
+        // Don't clear field keys immediately - wait until after scroll
+        // This ensures keys are available for scrolling if validation fails
       });
+
+      // Scroll to top of new section after widget rebuild
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(0);
+        }
+        // Clear field keys for previous section after scroll
+        _clearFieldKeysForSection(_currentSection - 1);
+      });
+    }
+  }
+
+  /// Clear field keys for a specific section to free memory
+  void _clearFieldKeysForSection(int sIdx) {
+    final keysToRemove = <String>[];
+    for (final key in _fieldKeys.keys) {
+      if (key.startsWith('$sIdx|')) {
+        keysToRemove.add(key);
+      }
+    }
+    for (final key in keysToRemove) {
+      _fieldKeys.remove(key);
     }
   }
 
@@ -1321,8 +1695,10 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                             });
 
                             final section = _sections[_currentSection];
-                            final sectionTitle = (section['title'] ?? '').toString();
-                            final sectionName = (section['section'] ?? '').toString();
+                            final sectionTitle = (section['title'] ?? '')
+                                .toString();
+                            final sectionName = (section['section'] ?? '')
+                                .toString();
 
                             bool saveSucceeded = false;
 
@@ -1346,14 +1722,18 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                               // Section хариулт хадгалагдсаны дараа answerId шинэчлэх
                               String? currentAnswerId = _answerId;
                               try {
-                                final dynamic data = (resp is Map<String, dynamic>)
+                                final dynamic data =
+                                    (resp is Map<String, dynamic>)
                                     ? (resp['data'] ?? resp)
                                     : resp;
                                 if (data is Map<String, dynamic>) {
                                   final String? returnedId =
-                                      (data['answerId'] ?? data['id'] ?? data['_id'])
+                                      (data['answerId'] ??
+                                              data['id'] ??
+                                              data['_id'])
                                           ?.toString();
-                                  if (returnedId != null && returnedId.isNotEmpty) {
+                                  if (returnedId != null &&
+                                      returnedId.isNotEmpty) {
                                     currentAnswerId = returnedId;
                                     setState(() => _answerId = returnedId);
                                   }
@@ -1361,10 +1741,17 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                               } catch (_) {}
 
                               // Дараа нь зураг илгээх (хэрэв байвал, answerId-тэй)
-                              if (currentAnswerId != null && currentAnswerId.isNotEmpty) {
-                                await _uploadSectionImages(sectionName, sectionTitle, currentAnswerId);
+                              if (currentAnswerId != null &&
+                                  currentAnswerId.isNotEmpty) {
+                                await _uploadSectionImages(
+                                  sectionName,
+                                  sectionTitle,
+                                  currentAnswerId,
+                                );
                               } else {
-                                debugPrint('⚠️ Warning: answerId is not available, skipping image upload');
+                                debugPrint(
+                                  '⚠️ Warning: answerId is not available, skipping image upload',
+                                );
                               }
 
                               saveSucceeded = true;
@@ -1372,7 +1759,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                               if (!mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('Хэсэг хадгалахад алдаа гарлаа: $e'),
+                                  content: Text(
+                                    'Хэсэг хадгалахад алдаа гарлаа: $e',
+                                  ),
                                   backgroundColor: Colors.red,
                                 ),
                               );
@@ -1394,8 +1783,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                             _onFinish();
                           },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          _isSavingSection ? Colors.grey.shade400 : AppColors.primary,
+                      backgroundColor: _isSavingSection
+                          ? Colors.grey.shade400
+                          : AppColors.primary,
                       foregroundColor: Colors.black,
                       disabledBackgroundColor: Colors.grey.shade300,
                       disabledForegroundColor: Colors.black54,
@@ -1410,7 +1800,9 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                                 width: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.black,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 10),

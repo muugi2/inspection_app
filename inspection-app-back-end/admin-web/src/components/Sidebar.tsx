@@ -87,6 +87,21 @@ const ReportsIcon = ({ className = '' }: IconProps) => (
   </svg>
 );
 
+const MonthlyReportIcon = ({ className = '' }: IconProps) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`w-5 h-5 ${className}`}
+  >
+    <rect x="3" y="4" width="18" height="18" rx="2" />
+    <path d="M3 10h18M8 2v4M16 2v4M3 18h18" />
+  </svg>
+);
+
 type MenuItem = {
   name: string;
   path: string;
@@ -147,6 +162,11 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
       name: 'Тайлан',
       path: '/organizations', // Default to first report page
       icon: ReportsIcon,
+    },
+    {
+      name: '1 сарын тайлан',
+      path: '/monthly-report',
+      icon: MonthlyReportIcon,
     },
   ];
 

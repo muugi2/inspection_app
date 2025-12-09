@@ -89,6 +89,16 @@ class AuthProvider extends ChangeNotifier {
         return 'Нэвтрэх мэдээлэл буруу байна.';
       }
 
+      if (statusCode == 403) {
+        // Account disabled error
+        if (rawMessage != null &&
+            (rawMessage.toLowerCase().contains('disabled') ||
+                rawMessage.toLowerCase().contains('account'))) {
+          return 'Таны бүртгэл идэвхгүй байна. Админтай холбогдоно уу.';
+        }
+        return rawMessage ?? 'Энэ үйлдлийг хийх эрх байхгүй.';
+      }
+
       if (statusCode == 404) {
         return 'И-мэйл бүртгэлгүй байна.';
       }
@@ -180,4 +190,3 @@ class AuthProvider extends ChangeNotifier {
     return fullName ?? 'Current User';
   }
 }
-

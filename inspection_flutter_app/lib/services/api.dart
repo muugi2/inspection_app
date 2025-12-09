@@ -743,28 +743,28 @@ class InspectionAPI {
 
       // Step 1: Upload images to backend via HTTP multipart
       debugPrint('📤 Step 1: Uploading images via HTTP multipart...');
-      
+
       final formData = FormData();
-      
+
       // Add metadata fields
       formData.fields.add(MapEntry('inspectionId', inspectionId));
       formData.fields.add(MapEntry('answerId', answerId));
       formData.fields.add(MapEntry('fieldId', fieldId));
       formData.fields.add(MapEntry('section', section));
       formData.fields.add(MapEntry('questionText', questionText));
-      
+
       // Add image files
       for (int i = 0; i < images.length; i++) {
         final file = images[i];
-        final fileName = 'inspection_${inspectionId}_answer_${answerId}_field_${fieldId}_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
-        
-        formData.files.add(MapEntry(
-          'images',
-          await MultipartFile.fromFile(
-            file.path,
-            filename: fileName,
+        final fileName =
+            'inspection_${inspectionId}_answer_${answerId}_field_${fieldId}_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+
+        formData.files.add(
+          MapEntry(
+            'images',
+            await MultipartFile.fromFile(file.path, filename: fileName),
           ),
-        ));
+        );
         debugPrint('  Adding image ${i + 1}: $fileName');
       }
 
@@ -772,26 +772,27 @@ class InspectionAPI {
       final uploadUrl = '/api/inspections/$inspectionId/upload-images';
       final fullUrl = '${AppConfig.apiBaseUrl}$uploadUrl';
       debugPrint('Full upload URL: $fullUrl');
-      
+
       final uploadResponse = await api.post(
         uploadUrl,
         data: formData,
-        options: Options(
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        ),
+        options: Options(headers: {'Content-Type': 'multipart/form-data'}),
       );
 
-      if (uploadResponse.statusCode != 200 && uploadResponse.statusCode != 201) {
-        throw Exception('Image upload failed with status: ${uploadResponse.statusCode}');
+      if (uploadResponse.statusCode != 200 &&
+          uploadResponse.statusCode != 201) {
+        throw Exception(
+          'Image upload failed with status: ${uploadResponse.statusCode}',
+        );
       }
 
       final uploadData = uploadResponse.data['data'] as Map<String, dynamic>;
       final uploadedImages = uploadData['uploadedImages'] as List<dynamic>;
-      
-      debugPrint('✅ HTTP upload successful. Uploaded ${uploadedImages.length} file(s)');
-      
+
+      debugPrint(
+        '✅ HTTP upload successful. Uploaded ${uploadedImages.length} file(s)',
+      );
+
       // Step 2: Prepare image metadata from upload response
       debugPrint('📝 Step 2: Images uploaded successfully:');
       uploadedImages.asMap().entries.forEach((entry) {

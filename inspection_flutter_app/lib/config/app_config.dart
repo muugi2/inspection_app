@@ -3,29 +3,29 @@ import 'package:flutter/foundation.dart';
 /// Centralized application configuration
 class AppConfig {
   // ==========================================
-  // NGROK CONFIGURATION
+  // API CONFIGURATION
   // ==========================================
-  // Ngrok HTTPS URL - automatically routes to localhost:4555
-  // Update this if ngrok URL changes (free tier URLs change on restart)
+  // Production server configuration
+  static const String _productionServerIp = '192.168.1.71';
+  static const int _productionServerPort = 4555;
+
+  // Ngrok configuration
+  // Хэрэв ngrok ашиглах бол доорх comment-үүдийг арилгаж URL оруулна
   static const String _ngrokBaseUrl =
       'https://digestible-betsey-aberrantly.ngrok-free.dev';
-
-  // Fallback to local server if ngrok is not configured
-  static const String _productionServerIp = '192.168.0.6';
-  static const int _productionServerPort = 4555;
 
   /// Check if ngrok URL is configured
   static bool get _isNgrokConfigured {
     return _ngrokBaseUrl.isNotEmpty && _ngrokBaseUrl.startsWith('https://');
   }
 
-  /// Get API base URL - uses ngrok if configured, otherwise falls back to local server
+  /// Get API base URL - uses ngrok if configured, otherwise falls back to production server
   static String get apiBaseUrl {
     if (_isNgrokConfigured) {
       // Remove trailing slash if present
       return _ngrokBaseUrl.replaceAll(RegExp(r'/$'), '');
     }
-    // Fallback to local server based on platform
+    // Use production server directly
     if (kIsWeb) {
       return 'http://localhost:$_productionServerPort';
     }
@@ -63,7 +63,7 @@ class AppConfig {
   ];
 
   /// FTP configuration
-  static const String ftpHost = '192.168.0.6';
+  static const String ftpHost = '192.168.1.71';
   static const int ftpPort = 2121;
   static const String ftpUser = 'test';
   static const String ftpPassword = 'T3st!234';
@@ -74,7 +74,6 @@ class AppConfig {
 
   /// Public-facing base URL for referencing uploaded images.
   /// Images are served via HTTP through the backend /uploads endpoint
-  /// Uses ngrok URL if configured, otherwise falls back to local server
   static String get ftpPublicBaseUrl {
     final base = apiBaseUrl;
     // Ensure /uploads path is added for image serving

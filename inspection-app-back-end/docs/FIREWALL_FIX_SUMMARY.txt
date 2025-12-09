@@ -127,8 +127,8 @@
 
   ШАЛГУУР 2: Портууд нээлттэй
   ────────────────────────────
-  Test-NetConnection -ComputerName 192.168.1.10 -Port 2121
-  Test-NetConnection -ComputerName 192.168.1.10 -Port 4555
+  Test-NetConnection -ComputerName 192.168.1.71 -Port 2121
+  Test-NetConnection -ComputerName 192.168.1.71 -Port 4555
 
   Хариу: TcpTestSucceeded : True ✅
 
@@ -168,7 +168,7 @@
 
   5. IP хаяг зөв эсэхийг шалгаарай
      ipconfig
-     → 192.168.1.10 байх ёстой
+     → 192.168.1.71 байх ёстой
 
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 📚 НЭМЭЛТ ФАЙЛУУД                                                       │

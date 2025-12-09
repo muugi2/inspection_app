@@ -69,9 +69,82 @@ interface RowDefinition {
   path: string;
 }
 
+// Dynamic function to generate rows from backend data
+// Shows all fields from backend, with labels from fieldLabelMap if available
+function generateRowsFromData(
+  sectionData: Record<string, FieldValue>,
+  sectionName: string,
+  fieldLabelMap: Record<string, string>
+): RowDefinition[] {
+  if (!sectionData) return [];
+  
+  // Include all fields from backend data
+  // Use label from fieldLabelMap if available, otherwise use the field key as label
+  return Object.keys(sectionData)
+    .filter(key => {
+      // Filter out null/undefined values and metadata fields
+      const value = sectionData[key];
+      const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+      return value !== null && 
+             value !== undefined && 
+             !excludedKeys.includes(key);
+    })
+    .map(key => ({
+      label: fieldLabelMap[key] || key, // Use label from map, or fallback to key
+      path: `${sectionName}.${key}`,
+    }));
+}
+
+// Field label mapping (field ID -> Mongolian label)
+const fieldLabels: Record<string, Record<string, string>> = {
+  exterior: {
+    platform_plate: 'Тавцангийн лист',
+    beam_joint_plate: 'Дам нуруу холбосон лист',
+    stop_bolt: 'Хязгаарлагчийн боолт',
+    interplatform_bolts: 'Тавцан хоорондын боолт',
+  },
+  indicator: {
+    led_display: 'Лед дэлгэц',
+    power_plug: 'Тэжээлийн залгуур',
+    seal_bolt: 'Лац болон лацны боолт',
+    buttons: 'Товчлуур',
+    junction_wiring: 'Холбогч хайрцаг болон сигналын утас',
+    serial_converter_plug: 'Сериал хөрвүүлэгч залгуур', // Backend maps 'serial_converter' to 'serial_converter_plug'
+    battery: 'Батарей',
+  },
+  jbox: {
+    box_integrity: 'Хайрцагны бүрэн бүтэн байдал',
+    collector_board: 'Сигналын утас цуглуулагч хавтан',
+    wire_tightener: 'Сигналын утас чангалагч',
+    resistor_element: 'Эсэргүүцлийн элемент',
+    protective_box: 'Холбогч хайрцагны хамгаалалтын гадна хайрцаг',
+  },
+  sensor: {
+    signal_wire: 'Сигналын утас',
+    ball: 'Шаариг',
+    base: 'Мэдрэгчийн суурь',
+    ball_cup_thin: 'Шааригны аяган суурь /нимгэн/',
+    plate: 'Ялтсан хавтан',
+  },
+  foundation: {
+    cross_base: 'Хөндлөн суурь',
+    anchor_plate: 'Суурийн анкер лист',
+    ramp_angle: 'Пандусын угольник',
+    ramp_stopper: 'Пандусын өшиглүүр',
+    ramp: 'Пандус',
+    slab_base: 'Нил суурь',
+    sensor_base: 'Мэдрэгчийн суурь',
+  },
+  cleanliness: {
+    under_platform: 'Тавцангийн доод тал',
+    top_platform: 'Тавцангийн дээд тал',
+    gap_platform_ramp: 'Автожингийн тавцан болон Пандус хоорондын завсар',
+    both_sides_area: 'Автожингийн 2 талын талбай',
+  },
+};
+
+// Legacy hardcoded rows (fallback if needed)
 const exteriorRows: RowDefinition[] = [
-  { label: 'Мэдрэгчийн суурь', path: 'exterior.sensor_base' },
-  { label: 'Дам нуруу', path: 'exterior.beam' },
   { label: 'Тавцангийн лист', path: 'exterior.platform_plate' },
   { label: 'Дам нуруу холбосон лист', path: 'exterior.beam_joint_plate' },
   { label: 'Хязгаарлагчийн боолт', path: 'exterior.stop_bolt' },
@@ -91,6 +164,7 @@ const indicatorRows: RowDefinition[] = [
     label: 'Сериал хөрвүүлэгч залгуур',
     path: 'indicator.serial_converter_plug',
   },
+  { label: 'Батарей', path: 'indicator.battery' },
 ];
 
 const jboxRows: RowDefinition[] = [
@@ -125,6 +199,7 @@ const foundationRows: RowDefinition[] = [
   { label: 'Пандусын өшиглүүр', path: 'foundation.ramp_stopper' },
   { label: 'Пандус', path: 'foundation.ramp' },
   { label: 'Нил суурь', path: 'foundation.slab_base' },
+  { label: 'Мэдрэгчийн суурь', path: 'foundation.sensor_base' },
 ];
 
 const cleanlinessRows: RowDefinition[] = [
@@ -219,20 +294,20 @@ function TableSection({
   sectionName: string;
   onImageClick?: (src: string, alt: string) => void;
 }) {
-  // Field ID mapping
+  // Field ID mapping - maps display field ID to backend field ID
+  // Backend uses 'serial_converter' but frontend displays as 'serial_converter_plug'
   const fieldIdMap: Record<string, string> = {
-    'exterior.sensor_base': 'sensor_base',
-    'exterior.beam': 'beam',
     'exterior.platform_plate': 'platform_plate',
     'exterior.beam_joint_plate': 'beam_joint_plate',
     'exterior.stop_bolt': 'stop_bolt',
     'exterior.interplatform_bolts': 'interplatform_bolts',
     'indicator.led_display': 'led_display',
     'indicator.power_plug': 'power_plug',
-    'indicator.seal_and_bolt': 'seal_bolt',
+    'indicator.seal_bolt': 'seal_bolt',
     'indicator.buttons': 'buttons',
     'indicator.junction_wiring': 'junction_wiring',
-    'indicator.serial_converter_plug': 'serial_converter',
+    'indicator.serial_converter_plug': 'serial_converter', // Backend field ID
+    'indicator.battery': 'battery',
     'jbox.box_integrity': 'box_integrity',
     'jbox.collector_board': 'collector_board',
     'jbox.wire_tightener': 'wire_tightener',
@@ -246,6 +321,7 @@ function TableSection({
     'foundation.cross_base': 'cross_base',
     'foundation.anchor_plate': 'anchor_plate',
     'foundation.ramp_angle': 'ramp_angle',
+    'foundation.sensor_base': 'sensor_base',
     'foundation.ramp_stopper': 'ramp_stopper',
     'foundation.ramp': 'ramp',
     'foundation.slab_base': 'slab_base',
@@ -254,6 +330,12 @@ function TableSection({
     'cleanliness.gap_platform_ramp': 'gap_platform_ramp',
     'cleanliness.both_sides_area': 'both_sides_area',
   };
+  
+  // Helper function to get field ID for image lookup
+  function getFieldIdForImages(sectionName: string, fieldKey: string): string {
+    const path = `${sectionName}.${fieldKey}`;
+    return fieldIdMap[path] || fieldKey;
+  }
 
   return (
     <section className="px-8 py-6">
@@ -308,7 +390,8 @@ function TableSection({
       
       {/* Field бүрийн зурагуудыг хүснэгтийн гадна, field бүрийн доор харуулах */}
       {rows.map((row) => {
-        const fieldId = fieldIdMap[row.path] || row.path.split('.').pop() || '';
+        const fieldKey = row.path.split('.').pop() || '';
+        const fieldId = getFieldIdForImages(sectionName, fieldKey);
         const fieldImages = getImagesForField(data.images, sectionName, fieldId);
         const hasImages = fieldImages.length > 0;
 
@@ -550,12 +633,48 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
             </div>
           </section>
 
-          <TableSection title="Автожингийн тавцан" rows={exteriorRows} data={preview.d} sectionName="exterior" onImageClick={handleImageToggle} />
-          <TableSection title="Тооцоолуур" rows={indicatorRows} data={preview.d} sectionName="indicator" onImageClick={handleImageToggle} />
-          <TableSection title="Автожингийн холбогч хайрцаг" rows={jboxRows} data={preview.d} sectionName="jbox" onImageClick={handleImageToggle} />
-          <TableSection title="Мэдрэгч элемент" rows={sensorRows} data={preview.d} sectionName="sensor" onImageClick={handleImageToggle} />
-          <TableSection title="Суурь" rows={foundationRows} data={preview.d} sectionName="foundation" onImageClick={handleImageToggle} />
-          <TableSection title="Автожингийн бохирдол" rows={cleanlinessRows} data={preview.d} sectionName="cleanliness" onImageClick={handleImageToggle} />
+          <TableSection 
+            title="Автожингийн тавцан" 
+            rows={generateRowsFromData(preview.d.exterior, 'exterior', fieldLabels.exterior)} 
+            data={preview.d} 
+            sectionName="exterior" 
+            onImageClick={handleImageToggle} 
+          />
+          <TableSection 
+            title="Тооцоолуур" 
+            rows={generateRowsFromData(preview.d.indicator, 'indicator', fieldLabels.indicator)} 
+            data={preview.d} 
+            sectionName="indicator" 
+            onImageClick={handleImageToggle} 
+          />
+          <TableSection 
+            title="Автожингийн холбогч хайрцаг" 
+            rows={generateRowsFromData(preview.d.jbox, 'jbox', fieldLabels.jbox)} 
+            data={preview.d} 
+            sectionName="jbox" 
+            onImageClick={handleImageToggle} 
+          />
+          <TableSection 
+            title="Мэдрэгч элемент" 
+            rows={generateRowsFromData(preview.d.sensor, 'sensor', fieldLabels.sensor)} 
+            data={preview.d} 
+            sectionName="sensor" 
+            onImageClick={handleImageToggle} 
+          />
+          <TableSection 
+            title="Суурь" 
+            rows={generateRowsFromData(preview.d.foundation, 'foundation', fieldLabels.foundation)} 
+            data={preview.d} 
+            sectionName="foundation" 
+            onImageClick={handleImageToggle} 
+          />
+          <TableSection 
+            title="Автожингийн бохирдол" 
+            rows={generateRowsFromData(preview.d.cleanliness, 'cleanliness', fieldLabels.cleanliness)} 
+            data={preview.d} 
+            sectionName="cleanliness" 
+            onImageClick={handleImageToggle} 
+          />
 
           <section className="px-8 py-6 border-t border-gray-200">
             <h3 className="font-semibold text-lg uppercase tracking-wide mb-3">

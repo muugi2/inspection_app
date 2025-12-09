@@ -43,3 +43,29 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Backend specific
+inspection-app-back-end/node_modules/
+inspection-app-back-end/.next/
+inspection-app-back-end/.env
+inspection-app-back-end/.env.local
+inspection-app-back-end/config.env
+inspection-app-back-end/*.log
+inspection-app-back-end/temp_uploads/
+inspection-app-back-end/ftp_data/
+inspection-app-back-end/admin-web/.next/
+inspection-app-back-end/admin-web/node_modules/
+inspection-app-back-end/admin-web/.env.local
+
+# Docker
+*.dockerignore
+
+# Sensitive files
+*.env
+config.env
+!env.example
+
+# Build outputs
+*.build/
+dist/
+build/

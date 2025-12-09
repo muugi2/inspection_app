@@ -1953,7 +1953,7 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
     console.log(`📦 Processing ${req.files.length} uploaded file(s)`);
     
     // Rename files to correct format: inspection_{id}_ans_{answerId}_field_{fieldId}_{timestamp}_{order}.jpg
-    const FTP_BASE_URL = process.env.FTP_BASE_URL || 'ftp://192.168.0.6';
+    const FTP_BASE_URL = process.env.FTP_BASE_URL || 'ftp://192.168.1.71';
     const FTP_REMOTE_PREFIX = process.env.FTP_REMOTE_PREFIX || 'test';
     const timestamp = Date.now();
     

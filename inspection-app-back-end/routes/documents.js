@@ -3,9 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const { TemplateHandler, MimeType } = require('easy-template-x');
 const sharp = require('sharp');
-const Docxtemplater = require('docxtemplater');
-const PizZip = require('pizzip');
-const JSZip = require('jszip');
 const MIME_TYPE_MAP = {
   'image/png': MimeType.Png,
   'image/jpeg': MimeType.Jpeg,
@@ -17,8 +14,12 @@ const MIME_TYPE_MAP = {
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(Object.keys(MIME_TYPE_MAP));
 
 // Зурагийн хэмжээ тохиргоо (environment variable эсвэл default утга)
-const IMAGE_WIDTH = parseInt(process.env.IMAGE_WIDTH) || 150; // Default: 150px
-const IMAGE_HEIGHT = parseInt(process.env.IMAGE_HEIGHT) || 200; // Default: 200px
+const IMAGE_WIDTH = parseInt(process.env.IMAGE_WIDTH) || 300; // Default: 300px (чанартай хэмжээ)
+const IMAGE_HEIGHT = parseInt(process.env.IMAGE_HEIGHT) || 400; // Default: 400px (чанартай хэмжээ)
+
+// Зурагийн чанарын тохиргоо
+const JPEG_QUALITY = parseInt(process.env.JPEG_QUALITY) || 95; // JPEG чанар (0-100, default: 95 - илүү өндөр чанар)
+const PNG_COMPRESSION = parseInt(process.env.PNG_COMPRESSION) || 6; // PNG compression (0-9, default: 6 - чанартай compression)
 
 async function convertUnsupportedImage(buffer, originalMimeType) {
   try {
@@ -50,6 +51,7 @@ async function createImageContent(imageData) {
   console.log('[documents] createImageContent called with:', {
     hasImageData: !!imageData,
     isObject: imageData && typeof imageData === 'object',
+    hasBuffer: !!(imageData && imageData.buffer),
     hasBase64: !!(imageData && imageData.base64),
     hasMimeType: !!(imageData && imageData.mimeType),
     base64Length: imageData?.base64?.length,
@@ -58,15 +60,18 @@ async function createImageContent(imageData) {
     fieldId: imageData?.fieldId,
   });
 
-  if (
-    !imageData ||
-    typeof imageData !== 'object' ||
-    !imageData.base64 ||
-    !imageData.mimeType
-  ) {
+  const hasBuffer =
+    imageData && imageData.buffer && Buffer.isBuffer(imageData.buffer);
+  const hasBase64 =
+    imageData &&
+    typeof imageData.base64 === 'string' &&
+    imageData.base64.length > 0;
+
+  if (!imageData || typeof imageData !== 'object' || !imageData.mimeType) {
     console.warn('[documents] ❌ Invalid imageData:', {
       imageData: imageData ? 'exists' : 'null',
-      hasBase64: !!(imageData && imageData.base64),
+      hasBuffer,
+      hasBase64,
       hasMimeType: !!(imageData && imageData.mimeType),
     });
     return null;
@@ -118,31 +123,54 @@ async function createImageContent(imageData) {
   }
 
   try {
-    // Validate base64 string
-    if (typeof imageData.base64 !== 'string') {
-      console.error('[documents] ❌ Base64 is not a string:', typeof imageData.base64);
+    let source;
+
+    if (hasBuffer) {
+      // Prefer binary buffer for highest quality, no extra encoding/decoding.
+      source = imageData.buffer;
+      console.log('[documents] Using binary buffer as image source', {
+        bufferLength: source.length,
+      });
+    } else if (hasBase64) {
+      // Validate base64 string
+      if (typeof imageData.base64 !== 'string') {
+        console.error(
+          '[documents] ❌ Base64 is not a string:',
+          typeof imageData.base64
+        );
+        return null;
+      }
+
+      if (imageData.base64.length === 0) {
+        console.error('[documents] ❌ Base64 string is empty');
+        return null;
+      }
+
+      // Check if base64 string looks valid (simple character set validation)
+      const base64Pattern = /^[A-Za-z0-9+/=]+$/;
+      if (!base64Pattern.test(imageData.base64)) {
+        console.error(
+          '[documents] ❌ Base64 string contains invalid characters'
+        );
+        console.error(
+          '[documents] First 100 chars:',
+          imageData.base64.substring(0, 100)
+        );
+        return null;
+      }
+
+      console.log('[documents] Converting base64 to Buffer...', {
+        base64Length: imageData.base64.length,
+        estimatedBufferSize: Math.ceil((imageData.base64.length * 3) / 4),
+      });
+
+      source = Buffer.from(imageData.base64, 'base64');
+    } else {
+      console.error(
+        '[documents] ❌ No valid image data provided (neither buffer nor base64)'
+      );
       return null;
     }
-
-    if (imageData.base64.length === 0) {
-      console.error('[documents] ❌ Base64 string is empty');
-      return null;
-    }
-
-    // Check if base64 string looks valid (starts with valid base64 chars)
-    const base64Pattern = /^[A-Za-z0-9+/=]+$/;
-    if (!base64Pattern.test(imageData.base64)) {
-      console.error('[documents] ❌ Base64 string contains invalid characters');
-      console.error('[documents] First 100 chars:', imageData.base64.substring(0, 100));
-      return null;
-    }
-
-    console.log('[documents] Converting base64 to Buffer...', {
-      base64Length: imageData.base64.length,
-      estimatedBufferSize: Math.ceil(imageData.base64.length * 3 / 4),
-    });
-
-    let source = Buffer.from(imageData.base64, 'base64');
 
     if (!format) {
       const converted = await convertUnsupportedImage(
@@ -162,8 +190,10 @@ async function createImageContent(imageData) {
       return null;
     }
 
-    // EXIF orientation-ийг засах болон зурагийн хэмжээг тохируулах
-    // Sharp-ийн autoOrient() нь EXIF orientation data-г уншиж, зурагийг зөв байрлуулна
+    // EXIF orientation-ийг засах.
+    // Анхны чанарыг аль болох хадгалах үүднээс:
+    //  - Orientation зөв байвал buffer-ийг өөрчлөхгүй, зөвхөн хэмжээгээр (width/height) харуулах
+    //  - Orientation буруу бол зөвхөн тэр үед sharp ашиглан засна
     let finalWidth = IMAGE_WIDTH;
     let finalHeight = IMAGE_HEIGHT;
     
@@ -186,28 +216,16 @@ async function createImageContent(imageData) {
           originalHeight: metadata.height,
         });
         
-        // autoOrient() нь EXIF orientation-ийг уншиж, зурагийг зөв байрлуулна
-        // Мөн resize хийж, хэмжээг тохируулах
-        source = await sharpImage
-          .autoOrient() // EXIF orientation-ийг автоматаар засах
-          .resize(IMAGE_WIDTH, IMAGE_HEIGHT, {
-            fit: 'inside', // Хэмжээг хадгалж, дотор нь байрлуулах
-            withoutEnlargement: true, // Жижиг зурагуудыг томруулахгүй
-          })
-          .toBuffer();
+        // autoOrient() нь EXIF orientation-ийг уншиж, зурагийг зөв байрлуулна.
+        // Чанарыг алдагдуулахгүйн тулд энд resize хийхгүй, зөвхөн orientation засна.
+        source = await sharpImage.autoOrient().toBuffer();
         
-        console.log('[documents] ✅ Image orientation fixed and resized');
+        console.log('[documents] ✅ Image orientation fixed');
       } else {
-        // Orientation зөв байвал зөвхөн resize хийх
-        console.log('[documents] Image orientation is correct, resizing...');
-        source = await sharpImage
-          .resize(IMAGE_WIDTH, IMAGE_HEIGHT, {
-            fit: 'inside',
-            withoutEnlargement: true,
-          })
-          .toBuffer();
-        
-        console.log('[documents] ✅ Image resized');
+        // Orientation зөв бол анхны buffer-ийг шууд ашиглана
+        console.log(
+          '[documents] Image orientation is correct, using original buffer without re-encoding'
+        );
       }
     } catch (orientationError) {
       console.warn('[documents] ⚠️ Could not process image with sharp:', orientationError.message);
@@ -339,6 +357,149 @@ async function rearrangeImagesInGridLayout(docxBuffer) {
   }
 }
 
+/**
+ * Paragraph XML дотроос харагдах текст агуулсан эсэхийг шалгах туслах функц
+ * - Table, drawing, field, page-break гэх мэт чухал элемент агуулсан paragraph-уудыг үлдээдэг
+ * - Зөвхөн whitespace/formatting (style) л агуулсан paragraph-уудыг "хоосон" гэж үзнэ
+ *
+ * @param {string} paragraphXml
+ * @returns {boolean} true бол paragraph нь хоосон, устгаж болно
+ */
+function isEmptyWordParagraph(paragraphXml) {
+  if (!paragraphXml || typeof paragraphXml !== 'string') {
+    return false;
+  }
+
+  // 1. Хүснэгт, зураг, field, structured document гэх мэт чухал элементүүд байвал устгахгүй
+  if (/<w:tbl\b|<w:drawing\b|<w:pict\b|<w:sdt\b|<w:fldSimple\b|<w:hyperlink\b/i.test(paragraphXml)) {
+    return false;
+  }
+
+  // 2. Page/line break, section break агуулсан paragraph-уудыг бас хадгална
+  if (/<w:br\b|<w:cr\b|<w:sectPr\b|<w:pageBreak\b/i.test(paragraphXml)) {
+    return false;
+  }
+
+  // 3. Paragraph properties хэсгийг авч хаях
+  let content = paragraphXml.replace(/<w:pPr[\s\S]*?<\/w:pPr>/gi, '');
+
+  // 4. Бүх XML tag-уудыг устгах
+  content = content.replace(/<[^>]+>/g, '');
+
+  // 5. NBSP болон түүнтэй төстэй whitespace entity-үүдийг энгийн space болгож, дараа нь цэвэрлэх
+  content = content
+    .replace(/&nbsp;|&#160;|&amp;#160;/gi, ' ')
+    .replace(/\s+/g, '')
+    .trim();
+
+  // Ямар нэг харагдах текст байхгүй бол paragraph-ийг хоосон гэж үзнэ
+  return content.length === 0;
+}
+
+/**
+ * DOCX файлаас хоосон paragraph-уудыг (enter/whitespace агуулсан мөр) арилгах
+ * Жишээ: "text1\n\n\ntext2" -> "text1\ntext2"
+ * @param {Buffer} docxBuffer - DOCX файлын buffer
+ * @returns {Promise<Buffer>} Хоосон paragraph-ууд арилгасан DOCX buffer
+ */
+async function removeEmptyParagraphs(docxBuffer) {
+  try {
+    const JSZip = require('jszip');
+    const zip = await JSZip.loadAsync(docxBuffer);
+    
+    // word/document.xml файлыг унших
+    const xmlFile = zip.file('word/document.xml');
+    if (!xmlFile) {
+      console.warn('[documents] removeEmptyParagraphs: word/document.xml not found');
+      return docxBuffer;
+    }
+    
+    const xml = await xmlFile.async('string');
+    const originalLength = xml.length;
+    
+    console.log('[documents] removeEmptyParagraphs: Processing XML with paragraph-aware cleanup...');
+
+    // DOCX XML-д paragraph нь <w:p>...</w:p> tag-тай байдаг.
+    // Эхлээд бүх paragraph-уудыг блок болгон олж, бүр paragraph тутамд "хоосон эсэх"-ийг шалгана.
+    const paragraphRegex = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/gi;
+
+    let newXml = '';
+    let lastIndex = 0;
+    let removedParagraphs = 0;
+    let keptParagraphs = 0;
+
+    xml.replace(paragraphRegex, (match, offset) => {
+      // Paragraph-оос өмнөх хэсгийг хадгална
+      newXml += xml.slice(lastIndex, offset);
+
+      if (isEmptyWordParagraph(match)) {
+        removedParagraphs += 1;
+        // Хоосон paragraph-ийг алгасанаар устгаж байна
+      } else {
+        keptParagraphs += 1;
+        newXml += match;
+      }
+
+      lastIndex = offset + match.length;
+      return match;
+    });
+
+    // Сүүлийн paragraph-аас хойших үлдэгдэл XML-ийг нэмнэ
+    newXml += xml.slice(lastIndex);
+
+    const newLength = newXml.length;
+    const removedChars = originalLength - newLength;
+
+    console.log(
+      `[documents] removeEmptyParagraphs: Removed ${removedParagraphs} empty paragraphs, kept ${keptParagraphs} paragraphs (Δ${removedChars} chars)`
+    );
+    
+    // Шинэчлэгдсэн XML-ийг ZIP-д буцааж оруулах
+    zip.file('word/document.xml', newXml);
+    
+    // ZIP-ийг buffer болгон хөрвүүлэх
+    const newBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 9 }
+    });
+    
+    console.log('[documents] removeEmptyParagraphs: ✅ Successfully removed empty paragraphs');
+    return newBuffer;
+  } catch (error) {
+    console.error('[documents] removeEmptyParagraphs: ⚠️ Error removing empty paragraphs:', error.message);
+    console.error('[documents] removeEmptyParagraphs: Stack:', error.stack);
+    // Алдаа гарвал анхны buffer-ийг буцаана
+    return docxBuffer;
+  }
+}
+
+/**
+ * DOCX файл дээр хийх бүх post-processing алхмуудыг нэг газар төвлөрүүлэх туслах функц
+ * Одоогоор:
+ *  - Хоосон paragraph-уудыг арилгах
+ *
+ * @param {Buffer} docxBuffer
+ * @param {Object} [options]
+ * @param {string} [options.context] - Log-д харагдах контекст (жишээ: 'inspection-docx', 'monthly-report')
+ * @returns {Promise<Buffer>}
+ */
+async function postProcessDocxBuffer(docxBuffer, options = {}) {
+  const { context = 'documents' } = options || {};
+
+  let buffer = docxBuffer;
+
+  try {
+    buffer = await removeEmptyParagraphs(buffer);
+  } catch (error) {
+    console.error(
+      `[${context}] postProcessDocxBuffer: ⚠️ Failed to remove empty paragraphs:`,
+      error.message
+    );
+  }
+
+  return buffer;
+}
 
 async function groupImagesBySectionAndField(images) {
   // Section + field бүрийн зурагуудыг бүлэглэх
@@ -505,6 +666,19 @@ async function generateInspectionDocx(answerId) {
   const flattenedFields = flattenTemplateFields(reportData.d || {}, 'd');
   console.log('[documents] Flattened fields count:', Object.keys(flattenedFields).length);
   
+  // Debug: Check serial_converter_plug data
+  console.log('[documents] Indicator section data:', {
+    hasIndicator: !!reportData.d?.indicator,
+    indicatorKeys: reportData.d?.indicator ? Object.keys(reportData.d.indicator) : [],
+    serialConverterPlug: reportData.d?.indicator?.serial_converter_plug,
+    serialConverter: reportData.d?.indicator?.serial_converter,
+  });
+  console.log('[documents] Flattened serial_converter_plug fields:', {
+    status: flattenedFields['d.indicator.serial_converter_plug.status'],
+    comment: flattenedFields['d.indicator.serial_converter_plug.comment'],
+    question: flattenedFields['d.indicator.serial_converter_plug.question'],
+  });
+  
   // Create templateData with both nested structure and flattened keys
   const templateData = {
     ...reportData,  // Keep original nested structure
@@ -514,6 +688,16 @@ async function generateInspectionDocx(answerId) {
   // Also ensure nested structure exists for images (easy-template-x might need both)
   if (!templateData.d) {
     templateData.d = {};
+  }
+  // Ensure indicator section exists and is properly set
+  if (!templateData.d.indicator) {
+    templateData.d.indicator = reportData.d?.indicator || {};
+  } else {
+    // Merge to ensure all fields are present
+    templateData.d.indicator = {
+      ...reportData.d?.indicator,
+      ...templateData.d.indicator,
+    };
   }
   if (!templateData.d.images) {
     templateData.d.images = {};
@@ -658,207 +842,58 @@ async function generateInspectionDocx(answerId) {
   // Add general images array if needed
   templateData['d.images'] = reportData.d?.images || [];
 
+  // Ensure serial_converter data is properly set in template
+  // Template uses {{d.indicator.serial_converter.status}} and {{d.indicator.serial_converter.comment}}
+  // Check both serial_converter (original) and serial_converter_plug (mapped for frontend)
+  let serialConverter = reportData.d?.indicator?.serial_converter;
+  
+  if (!serialConverter && reportData.d?.indicator?.serial_converter_plug) {
+    // If serial_converter doesn't exist, get from serial_converter_plug
+    serialConverter = reportData.d.indicator.serial_converter_plug;
+    console.log('[documents] ⚠️ serial_converter not found, using serial_converter_plug:', serialConverter);
+  }
+  
+  if (serialConverter) {
+    // Ensure indicator section exists
+    if (!templateData.d.indicator) {
+      templateData.d.indicator = reportData.d?.indicator || {};
+    }
+    
+    // Template uses d.indicator.serial_converter.status, so set serial_converter
+    templateData.d.indicator.serial_converter = serialConverter;
+    
+    // Set in flattened structure (for dot-separated placeholders like d.indicator.serial_converter.status)
+    templateData['d.indicator.serial_converter'] = serialConverter;
+    templateData['d.indicator.serial_converter.status'] = serialConverter.status || '';
+    templateData['d.indicator.serial_converter.comment'] = serialConverter.comment || '';
+    templateData['d.indicator.serial_converter.question'] = serialConverter.question || '';
+    
+    // Also set serial_converter_plug for backward compatibility
+    templateData.d.indicator.serial_converter_plug = serialConverter;
+    templateData['d.indicator.serial_converter_plug'] = serialConverter;
+    templateData['d.indicator.serial_converter_plug.status'] = serialConverter.status || '';
+    templateData['d.indicator.serial_converter_plug.comment'] = serialConverter.comment || '';
+    templateData['d.indicator.serial_converter_plug.question'] = serialConverter.question || '';
+    
+    console.log('[documents] ✅ Explicitly set serial_converter data:', {
+      status: serialConverter.status,
+      comment: serialConverter.comment,
+      question: serialConverter.question,
+      hasNested: !!templateData.d.indicator.serial_converter,
+      hasFlattenedStatus: !!templateData['d.indicator.serial_converter.status'],
+      hasFlattenedComment: !!templateData['d.indicator.serial_converter.comment'],
+    });
+  } else {
+    console.warn('[documents] ⚠️ serial_converter data not found in reportData.d.indicator');
+  }
+
   // Process template with easy-template-x
   let buffer = await templateHandler.process(templateFile, templateData);
-  
-  // Post-processing: Remove empty paragraphs left by conditional blocks
-  // NOTE: This function is conservative - it only removes paragraphs that are completely empty
-  // to avoid accidentally removing paragraphs with images or other content
-  try {
-    buffer = await removeEmptyParagraphs(buffer);
-  } catch (postProcessError) {
-    console.error('[documents] ⚠️ Post-processing failed, returning buffer without cleanup:', postProcessError);
-    // If post-processing fails, return original buffer to preserve images
-    // This ensures images are never lost even if post-processing has issues
-  }
-  
+
+  // Post-processing: DOCX файлыг цэвэрлэх (хоосон мөрүүдийг арилгах гэх мэт)
+  buffer = await postProcessDocxBuffer(buffer, { context: 'inspection-docx' });
+
   return buffer;
-}
-
-/**
- * Remove empty paragraphs from generated DOCX file
- * This fixes the issue where conditional blocks leave empty paragraphs when they are false
- * Improved version that properly detects and removes truly empty paragraphs
- * @param {Buffer} docxBuffer - The generated DOCX file buffer
- * @returns {Promise<Buffer>} The cleaned DOCX file buffer
- */
-async function removeEmptyParagraphs(docxBuffer) {
-  try {
-    const zip = await JSZip.loadAsync(docxBuffer);
-    let docXml = await zip.file('word/document.xml').async('string');
-    
-    console.log('[documents] Post-processing: Removing empty paragraphs...');
-    console.log('[documents] Original XML length:', docXml.length);
-    
-    // Improved approach: Use a more reliable method to find and remove empty paragraphs
-    // Match paragraph tags with their full content, including nested elements
-    const paragraphPattern = /<w:p(?:\s[^>]*)?>([\s\S]*?)<\/w:p>/g;
-    
-    let cleanedXml = docXml;
-    let removedCount = 0;
-    let lastIndex = 0;
-    const parts = [];
-    let match;
-    
-    // Reset regex lastIndex
-    paragraphPattern.lastIndex = 0;
-    
-    // Find all paragraphs
-    while ((match = paragraphPattern.exec(docXml)) !== null) {
-      // Add content before this paragraph
-      if (match.index > lastIndex) {
-        parts.push(docXml.substring(lastIndex, match.index));
-      }
-      
-      const fullParagraph = match[0];
-      const paragraphContent = match[1];
-      
-      // Check if paragraph is truly empty
-      const isEmpty = isParagraphEmpty(paragraphContent);
-      
-      if (isEmpty) {
-        // Remove this paragraph completely
-        removedCount++;
-        console.log(`[documents] Removing empty paragraph at position ${match.index}`);
-      } else {
-        // Keep this paragraph
-        parts.push(fullParagraph);
-      }
-      
-      lastIndex = match.index + fullParagraph.length;
-    }
-    
-    // Add remaining content after last paragraph
-    if (lastIndex < docXml.length) {
-      parts.push(docXml.substring(lastIndex));
-    }
-    
-    // Rebuild XML
-    cleanedXml = parts.join('');
-    
-    // Additional cleanup: Remove excessive consecutive empty paragraph tags
-    // This handles cases where multiple empty paragraphs were adjacent
-    cleanedXml = cleanedXml.replace(/(<\/w:p>\s*(?:<w:p[^>]*>\s*<\/w:p>\s*)*){3,}/g, '</w:p>\n');
-    
-    // Also remove standalone empty paragraph tags that might remain
-    cleanedXml = cleanedXml.replace(/<w:p(?:\s[^>]*)?>\s*<\/w:p>/g, '');
-    
-    // Remove multiple consecutive newlines/whitespace between paragraphs
-    cleanedXml = cleanedXml.replace(/(<\/w:p>\s*){2,}/g, '</w:p>\n');
-    
-    if (removedCount > 0) {
-      console.log(`[documents] ✅ Removed ${removedCount} empty paragraph(s)`);
-      console.log(`[documents] XML length after cleanup: ${cleanedXml.length} (reduced by ${docXml.length - cleanedXml.length} bytes)`);
-    } else {
-      console.log('[documents] ℹ️  No empty paragraphs found to remove');
-    }
-    
-    // IMPORTANT: Preserve all image files in the zip
-    console.log('[documents] Preserving all files in zip (especially images in word/media/)...');
-    
-    // Update only the document.xml, keep all other files unchanged
-    zip.file('word/document.xml', cleanedXml);
-    
-    // Generate new buffer with all original files preserved
-    const cleanedBuffer = await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 9 },
-    });
-    
-    return cleanedBuffer;
-  } catch (error) {
-    console.error('[documents] ❌ Error removing empty paragraphs:', error);
-    console.error('[documents] Error details:', {
-      message: error.message,
-      stack: error.stack,
-    });
-    // If post-processing fails, return original buffer
-    return docxBuffer;
-  }
-}
-
-/**
- * Check if a paragraph is truly empty (contains no meaningful content)
- * @param {string} paragraphContent - The content inside <w:p>...</w:p>
- * @returns {boolean} True if paragraph is empty
- */
-function isParagraphEmpty(paragraphContent) {
-  // Remove all XML tags to check for text content
-  const textOnly = paragraphContent
-    .replace(/<[^>]+>/g, '') // Remove all XML tags
-    .replace(/&nbsp;/g, ' ') // Replace &nbsp; with space
-    .replace(/&#160;/g, ' ') // Replace &#160; with space
-    .trim();
-  
-  // If there's any text, it's not empty
-  if (textOnly.length > 0) {
-    return false;
-  }
-  
-  // Check for images (preserve paragraphs with images)
-  const hasImages = paragraphContent.includes('<w:drawing') || 
-                    paragraphContent.includes('<w:pict') ||
-                    paragraphContent.includes('<a:blip') ||
-                    paragraphContent.includes('<a:graphic') ||
-                    paragraphContent.includes('<wp:docPr') ||
-                    paragraphContent.includes('r:embed=') ||
-                    paragraphContent.includes('r:link=') ||
-                    paragraphContent.includes('wordml://');
-  
-  if (hasImages) {
-    return false; // Keep paragraphs with images
-  }
-  
-  // Check for tables
-  if (paragraphContent.includes('<w:tbl')) {
-    return false;
-  }
-  
-  // Check for hyperlinks
-  if (paragraphContent.includes('<w:hyperlink')) {
-    return false;
-  }
-  
-  // Check for bookmarks
-  if (paragraphContent.includes('<w:bookmarkStart')) {
-    return false;
-  }
-  
-  // Check for other meaningful elements
-  const hasOtherElements = /<w:(ins|del|moveFrom|moveTo|oMath|oMathPara|permStart|permEnd|proofErr|sdt|smartTag|subDoc)[^>]*>/.test(paragraphContent);
-  
-  if (hasOtherElements) {
-    return false;
-  }
-  
-  // Check if paragraph only contains paragraph properties (w:pPr) and nothing else
-  const onlyProperties = /^(\s*<w:pPr[^>]*>[\s\S]*?<\/w:pPr>\s*)*$/.test(paragraphContent);
-  
-  if (onlyProperties) {
-    return true; // Empty paragraph with only properties
-  }
-  
-  // Check if paragraph only contains empty runs (<w:r></w:r> or <w:r><w:t></w:t></w:r>)
-  const runsOnly = paragraphContent.match(/<w:r[^>]*>[\s\S]*?<\/w:r>/g);
-  if (runsOnly) {
-    let allRunsEmpty = true;
-    for (const run of runsOnly) {
-      // Extract text from run
-      const runText = run.replace(/<[^>]+>/g, '').trim();
-      if (runText.length > 0) {
-        allRunsEmpty = false;
-        break;
-      }
-    }
-    if (allRunsEmpty) {
-      return true; // All runs are empty
-    }
-  }
-  
-  // If we get here, paragraph might have some content we're not detecting
-  // Be conservative and keep it
-  return false;
 }
 
 // Generate DOCX using Docxtemplater (answer ID)
@@ -911,16 +946,440 @@ router.get('/answers/:answerId/docx', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * Нэг сарын бүх үзлэгүүдийн тайлан үүсгэх (1template.docx ашиглах)
+ * @param {BigInt} siteId - Site ID
+ * @param {Number} year - Жил (жишээ: 2024)
+ * @param {Number} month - Сар (1-12)
+ * @returns {Promise<Buffer>} Generated DOCX buffer
+ */
+async function generateMonthlyReportDocx(siteId, year, month) {
+  // Сарын эхлэл болон төгсгөлийн огноо тооцоолох
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+
+  console.log(`[monthly-report] Generating report for site ${siteId}, ${year}-${month}`);
+  console.log(`[monthly-report] Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
+  // Тухайн сард хийгдсэн бүх inspection answer-уудыг олох
+  const answers = await prisma.InspectionAnswer.findMany({
+    where: {
+      inspection: {
+        siteId: BigInt(siteId),
+        deletedAt: null,
+      },
+      answeredAt: {
+        gte: startDate,
+        lte: endDate,
+      },
+    },
+    include: {
+      inspection: {
+        include: {
+          contract: { include: { organization: true } },
+          site: { include: { organization: true } },
+          device: { include: { model: true } },
+        },
+      },
+    },
+    orderBy: {
+      answeredAt: 'asc',
+    },
+  });
+
+  console.log(`[monthly-report] Found ${answers.length} inspections for the month`);
+
+  if (answers.length === 0) {
+    throw new Error('No inspections found for the specified month');
+  }
+
+  // 1template.docx файлыг ашиглах
+  const MONTHLY_TEMPLATE_FILE = '1template.docx';
+  const templatePath = path.join(
+    __dirname,
+    '..',
+    'templates',
+    MONTHLY_TEMPLATE_FILE
+  );
+
+  if (!fs.existsSync(templatePath)) {
+    throw new Error(`Monthly template file ${MONTHLY_TEMPLATE_FILE} is missing.`);
+  }
+
+  const templateFile = fs.readFileSync(templatePath);
+
+  // Бүх inspection-уудын мэдээллийг бэлтгэх
+  const inspectionsData = [];
+
+  for (const answer of answers) {
+    // Нэг үзлэгийн мэдээллийг бэлтгэх
+    const reportData = await buildInspectionReportData(prisma, {
+      answerId: answer.id,
+    });
+
+    console.log(`[monthly-report] Processing inspection answer ${answer.id.toString()}:`, {
+      hasExterior: !!reportData.d?.exterior,
+      hasIndicator: !!reportData.d?.indicator,
+      hasJbox: !!reportData.d?.jbox,
+      hasSensor: !!reportData.d?.sensor,
+      hasFoundation: !!reportData.d?.foundation,
+      hasCleanliness: !!reportData.d?.cleanliness,
+      imageCount: reportData.d?.images?.length || 0,
+    });
+
+    // Flatten the d object specifically with 'd' prefix
+    const flattenedFields = flattenTemplateFields(reportData.d || {}, 'd');
+
+    // Зургуудыг бэлтгэх
+    const rawImages = reportData.d?.images || [];
+    console.log(`[monthly-report] Loading images for answer ${answer.id.toString()}:`, {
+      totalImages: rawImages.length,
+      imagesWithBase64: rawImages.filter(img => img.base64).length,
+      imagesBySection: rawImages.reduce((acc, img) => {
+        const section = img.section || 'unknown';
+        acc[section] = (acc[section] || 0) + 1;
+        return acc;
+      }, {}),
+    });
+    
+    const imagesBySectionField = await groupImagesBySectionAndField(rawImages);
+    
+    console.log(`[monthly-report] Grouped images:`, {
+      totalGroups: Object.keys(imagesBySectionField).length,
+      groups: Object.keys(imagesBySectionField).map(key => ({
+        key,
+        count: imagesBySectionField[key]?.length || 0,
+      })),
+    });
+
+    // Field mapping (одоогийн кодтой ижил)
+    const fieldMappings = {
+      exterior: {
+        platform_plate: 'platform_plate',
+        beam_joint_plate: 'beam_joint_plate',
+        stop_bolt: 'stop_bolt',
+        interplatform_bolts: 'interplatform_bolts',
+      },
+      indicator: {
+        led_display: 'led_display',
+        power_plug: 'power_plug',
+        seal_bolt: 'seal_bolt',
+        buttons: 'buttons',
+        junction_wiring: 'junction_wiring',
+        serial_converter: 'serial_converter_plug',
+        battery: 'battery',
+      },
+      jbox: {
+        box_integrity: 'box_integrity',
+        collector_board: 'collector_board',
+        wire_tightener: 'wire_tightener',
+        resistor_element: 'resistor_element',
+        protective_box: 'protective_box',
+      },
+      sensor: {
+        signal_wire: 'signal_wire',
+        ball: 'ball',
+        base: 'base',
+        ball_cup_thin: 'ball_cup_thin',
+        plate: 'plate',
+      },
+      foundation: {
+        cross_base: 'cross_base',
+        anchor_plate: 'anchor_plate',
+        ramp_angle: 'ramp_angle',
+        ramp_stopper: 'ramp_stopper',
+        ramp: 'ramp',
+        slab_base: 'slab_base',
+        sensor_base: 'sensor_base',
+      },
+      cleanliness: {
+        under_platform: 'under_platform',
+        top_platform: 'top_platform',
+        gap_platform_ramp: 'gap_platform_ramp',
+        both_sides_area: 'both_sides_area',
+      },
+    };
+
+    // Нэг үзлэгийн template data бэлтгэх
+    const inspectionTemplateData = {
+      ...reportData,
+      ...flattenedFields,
+    };
+
+    // Ensure nested structure exists and preserve original nested data for status/comment access
+    if (!inspectionTemplateData.d) {
+      inspectionTemplateData.d = reportData.d || {};
+    } else {
+      // Merge nested structure to ensure status/comment are accessible both ways
+      inspectionTemplateData.d = {
+        ...reportData.d,
+        ...inspectionTemplateData.d,
+      };
+    }
+    if (!inspectionTemplateData.d.images) {
+      inspectionTemplateData.d.images = {};
+    }
+    if (!inspectionTemplateData.d.hasImages) {
+      inspectionTemplateData.d.hasImages = {};
+    }
+
+    // Ensure all section fields have proper nested structure with status/comment
+    Object.keys(fieldMappings).forEach((section) => {
+      if (!inspectionTemplateData.d[section]) {
+        inspectionTemplateData.d[section] = reportData.d?.[section] || {};
+      }
+      Object.keys(fieldMappings[section]).forEach((fieldId) => {
+        const fieldKey = fieldMappings[section][fieldId];
+        if (!inspectionTemplateData.d[section][fieldKey]) {
+          // Get from reportData if available
+          const originalField = reportData.d?.[section]?.[fieldKey];
+          inspectionTemplateData.d[section][fieldKey] = originalField || {
+            status: '',
+            comment: '',
+            question: '',
+          };
+        }
+        // Ensure status and comment exist
+        const fieldData = inspectionTemplateData.d[section][fieldKey];
+        if (!fieldData.status && fieldData.status !== '') {
+          fieldData.status = '';
+        }
+        if (!fieldData.comment && fieldData.comment !== '') {
+          fieldData.comment = '';
+        }
+        
+        // Log if status/comment are missing (for debugging)
+        if (!fieldData.status && !fieldData.comment) {
+          console.warn(`[monthly-report] ⚠️ Field ${section}.${fieldKey} has no status or comment`);
+        }
+      });
+    });
+
+    // Signature image
+    const inspectorSignature = reportData.d?.signatures?.inspector;
+    const inspectorImage = createSignatureImageContent(inspectorSignature);
+    if (inspectorImage) {
+      inspectionTemplateData['d.signatures.inspector'] = inspectorImage;
+    }
+
+    // FTP image
+    const ftpImage = reportData.d?.ftp_image;
+    const ftpImageContent = createSignatureImageContent(ftpImage);
+    if (ftpImageContent) {
+      ftpImageContent.width = 300;
+      ftpImageContent.height = 200;
+      inspectionTemplateData['d.ftp_image'] = ftpImageContent;
+    }
+
+    // Initialize all field mappings
+    Object.keys(fieldMappings).forEach((section) => {
+      Object.keys(fieldMappings[section]).forEach((fieldId) => {
+        const fieldKey = fieldMappings[section][fieldId];
+        const templateKey = `d.images.${section}.${fieldKey}`;
+        const hasImagesKey = `d.hasImages.${section}.${fieldKey}`;
+
+        if (!inspectionTemplateData[templateKey]) {
+          inspectionTemplateData[templateKey] = [];
+        }
+        if (inspectionTemplateData[hasImagesKey] === undefined) {
+          inspectionTemplateData[hasImagesKey] = false;
+        }
+
+        if (!inspectionTemplateData.d.images[section]) {
+          inspectionTemplateData.d.images[section] = {};
+        }
+        if (!inspectionTemplateData.d.hasImages[section]) {
+          inspectionTemplateData.d.hasImages[section] = {};
+        }
+        if (!inspectionTemplateData.d.images[section][fieldKey]) {
+          inspectionTemplateData.d.images[section][fieldKey] = [];
+        }
+        if (inspectionTemplateData.d.hasImages[section][fieldKey] === undefined) {
+          inspectionTemplateData.d.hasImages[section][fieldKey] = false;
+        }
+      });
+    });
+
+    // Add actual images
+    // Note: images in imagesBySectionField are already processed by createImageContent in groupImagesBySectionAndField
+    Object.keys(imagesBySectionField).forEach((key) => {
+      const [section, fieldId] = key.split('.');
+      const images = imagesBySectionField[key];
+
+      console.log(`[monthly-report] Processing images for ${key}:`, {
+        section,
+        fieldId,
+        imageCount: Array.isArray(images) ? images.length : 0,
+        hasMapping: !!(fieldMappings[section] && fieldMappings[section][fieldId]),
+      });
+
+      // Try to find matching field - first try direct match, then try reverse lookup
+      let fieldKey = null;
+      if (fieldMappings[section] && fieldMappings[section][fieldId]) {
+        fieldKey = fieldMappings[section][fieldId];
+      } else {
+        // Try reverse lookup: find the fieldId that maps to fieldId
+        // This handles cases where database field_id might differ from template key
+        if (fieldMappings[section]) {
+          const matchingEntry = Object.entries(fieldMappings[section]).find(
+            ([dbFieldId, templateKey]) => dbFieldId === fieldId || templateKey === fieldId
+          );
+          if (matchingEntry) {
+            fieldKey = matchingEntry[1]; // Use template key
+            console.log(`[monthly-report] Found reverse mapping: ${fieldId} -> ${fieldKey}`);
+          }
+        }
+      }
+
+      if (fieldKey) {
+        const templateKey = `d.images.${section}.${fieldKey}`;
+        const hasImagesKey = `d.hasImages.${section}.${fieldKey}`;
+
+        const imageArray = Array.isArray(images) ? images : [];
+        const imageCount = imageArray.length;
+
+        // Images are already processed image content objects from groupImagesBySectionAndField
+        const loopItems = imageArray.map((image, index) => ({
+          image,
+          index,
+          total: imageCount,
+          isFirst: index === 0,
+          isLast: index === imageCount - 1,
+        }));
+
+        inspectionTemplateData[templateKey] = loopItems;
+        inspectionTemplateData[hasImagesKey] = loopItems.length > 0;
+
+        if (!inspectionTemplateData.d.images[section]) {
+          inspectionTemplateData.d.images[section] = {};
+        }
+        if (!inspectionTemplateData.d.hasImages[section]) {
+          inspectionTemplateData.d.hasImages[section] = {};
+        }
+        inspectionTemplateData.d.images[section][fieldKey] = loopItems;
+        inspectionTemplateData.d.hasImages[section][fieldKey] = loopItems.length > 0;
+
+        console.log(`[monthly-report] ✅ Added ${imageCount} images for ${section}.${fieldKey}`);
+      } else {
+        console.warn(`[monthly-report] ⚠️ No mapping found for ${key} (section: ${section}, fieldId: ${fieldId})`);
+      }
+    });
+
+    // Add general images array
+    inspectionTemplateData['d.images'] = reportData.d?.images || [];
+
+    // Ensure serial_converter data is properly set in template
+    // Template uses {{d.indicator.serial_converter.status}} and {{d.indicator.serial_converter.comment}}
+    // Check both serial_converter (original) and serial_converter_plug (mapped for frontend)
+    let serialConverter = reportData.d?.indicator?.serial_converter;
+    
+    if (!serialConverter && reportData.d?.indicator?.serial_converter_plug) {
+      // If serial_converter doesn't exist, get from serial_converter_plug
+      serialConverter = reportData.d.indicator.serial_converter_plug;
+      console.log(`[monthly-report] ⚠️ serial_converter not found, using serial_converter_plug for inspection ${answer.id.toString()}:`, serialConverter);
+    }
+    
+    if (serialConverter) {
+      // Ensure indicator section exists
+      if (!inspectionTemplateData.d.indicator) {
+        inspectionTemplateData.d.indicator = reportData.d.indicator || {};
+      }
+      
+      // Template uses d.indicator.serial_converter.status, so set serial_converter
+      inspectionTemplateData.d.indicator.serial_converter = serialConverter;
+      
+      // Set in flattened structure (for dot-separated placeholders like d.indicator.serial_converter.status)
+      inspectionTemplateData['d.indicator.serial_converter'] = serialConverter;
+      inspectionTemplateData['d.indicator.serial_converter.status'] = serialConverter.status || '';
+      inspectionTemplateData['d.indicator.serial_converter.comment'] = serialConverter.comment || '';
+      inspectionTemplateData['d.indicator.serial_converter.question'] = serialConverter.question || '';
+      
+      // Also set serial_converter_plug for backward compatibility
+      inspectionTemplateData.d.indicator.serial_converter_plug = serialConverter;
+      inspectionTemplateData['d.indicator.serial_converter_plug'] = serialConverter;
+      inspectionTemplateData['d.indicator.serial_converter_plug.status'] = serialConverter.status || '';
+      inspectionTemplateData['d.indicator.serial_converter_plug.comment'] = serialConverter.comment || '';
+      inspectionTemplateData['d.indicator.serial_converter_plug.question'] = serialConverter.question || '';
+      
+      console.log(`[monthly-report] ✅ Explicitly set serial_converter data for inspection ${answer.id.toString()}:`, {
+        status: serialConverter.status,
+        comment: serialConverter.comment,
+        question: serialConverter.question,
+      });
+    } else {
+      console.warn(`[monthly-report] ⚠️ serial_converter data not found for inspection ${answer.id.toString()}`);
+    }
+
+    // Нэг үзлэгийн мэдээллийг array-д нэмэх
+    inspectionsData.push(inspectionTemplateData);
+  }
+
+  // Template data бэлтгэх - inspections array-ийг дамжуулах
+  const templateData = {
+    inspections: inspectionsData,
+    totalInspections: inspectionsData.length,
+    year: year,
+    month: month,
+    monthName: new Date(year, month - 1).toLocaleString('mn-MN', { month: 'long' }),
+  };
+
+  console.log(`[monthly-report] Template data prepared with ${inspectionsData.length} inspections`);
+
+  // Template-ийг боловсруулах
+  let buffer = await templateHandler.process(templateFile, templateData);
+
+  // Post-processing: DOCX файлыг цэвэрлэх (хоосон мөрүүдийг арилгах гэх мэт)
+  buffer = await postProcessDocxBuffer(buffer, { context: 'monthly-report' });
+
+  return buffer;
+}
+
+// Нэг сарын тайлан үүсгэх endpoint
+router.get('/sites/:siteId/monthly-report', authMiddleware, async (req, res) => {
+  try {
+    const siteId = BigInt(req.params.siteId);
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const month = parseInt(req.query.month) || new Date().getMonth() + 1;
+
+    if (month < 1 || month > 12) {
+      return res.status(400).json({
+        error: 'Invalid month',
+        message: 'Month must be between 1 and 12',
+      });
+    }
+
+    const buffer = await generateMonthlyReportDocx(siteId, year, month);
+
+    const filename = `monthly-report-${siteId}-${year}-${month}.docx`;
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Error generating monthly report:', error);
+    return res.status(500).json({
+      error: 'Failed to generate monthly report',
+      message: error.message,
+    });
+  }
+});
+
 // Export functions for testing (before router export)
 const exportedFunctions = {
   groupImagesBySectionAndField,
   createImageContent,
   createSignatureImageContent,
+  removeEmptyParagraphs,
+  postProcessDocxBuffer,
   generateInspectionDocx,
+  generateMonthlyReportDocx,
 };
-
 // Export router as default
 module.exports = Object.assign(router, exportedFunctions);
+
 
 
 
