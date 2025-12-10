@@ -80,3 +80,4 @@ git push -u github main --force
 
 GitHub дээр repository нээж, бүх файлууд байгаа эсэхийг шалгана уу.
 
+

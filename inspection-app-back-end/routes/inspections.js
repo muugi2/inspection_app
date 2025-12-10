@@ -622,6 +622,11 @@ router.get('/by-schedule-type/:scheduleType', authMiddleware, async (req, res) =
 
     console.log(`[GET /by-schedule-type/:scheduleType] Found ${inspections.length} inspections for scheduleType ${requestedScheduleType}`);
     
+    // Debug: Log each inspection's scheduleType
+    inspections.forEach((inspection, index) => {
+      console.log(`[GET /by-schedule-type/:scheduleType] Inspection ${index + 1}: id=${inspection.id}, scheduleType=${inspection.scheduleType}, title=${inspection.title}`);
+    });
+    
     const formatted = inspections.map(inspection => ({
       id: inspection.id.toString(),
       orgId: inspection.orgId.toString(),
@@ -3920,6 +3925,7 @@ router.post('/', authMiddleware, async (req, res) => {
       contractId,
       templateId,
       type,
+      scheduleType,
       title,
       scheduledAt,
       notes,
@@ -3971,6 +3977,31 @@ router.post('/', authMiddleware, async (req, res) => {
 
     // Normalize type to uppercase (Prisma enum requirement)
     const normalizedType = type.toUpperCase();
+    
+    // Normalize scheduleType - handle empty strings and undefined/null properly
+    // Only default to 'SCHEDULED' if scheduleType is truly not provided
+    let normalizedScheduleType;
+    if (scheduleType && typeof scheduleType === 'string' && scheduleType.trim() !== '') {
+      normalizedScheduleType = scheduleType.toUpperCase().trim();
+    } else {
+      // Default to SCHEDULED only if scheduleType is not provided
+      normalizedScheduleType = 'SCHEDULED';
+      console.warn(`[POST /api/inspections] scheduleType not provided or empty, defaulting to SCHEDULED. Received: "${scheduleType}"`);
+    }
+
+    console.log(`[POST /api/inspections] Creating inspection:`);
+    console.log(`  - scheduleType from request: "${scheduleType}" (type: ${typeof scheduleType})`);
+    console.log(`  - normalizedScheduleType: "${normalizedScheduleType}"`);
+    console.log(`  - Full request body:`, JSON.stringify(req.body, null, 2));
+
+    // Validate scheduleType
+    const allowedScheduleTypes = ['DAILY', 'SCHEDULED'];
+    if (!allowedScheduleTypes.includes(normalizedScheduleType)) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: `scheduleType must be one of: ${allowedScheduleTypes.join(', ')}. Received: "${scheduleType}"`,
+      });
+    }
 
     // Create inspection
     const inspection = await prisma.Inspection.create({
@@ -3981,6 +4012,7 @@ router.post('/', authMiddleware, async (req, res) => {
         contractId: finalContractId ? BigInt(finalContractId) : null,
         templateId: templateId ? BigInt(templateId) : null,
         type: normalizedType,
+        scheduleType: normalizedScheduleType,
         title: title,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: 'DRAFT',
@@ -4022,6 +4054,7 @@ router.post('/', authMiddleware, async (req, res) => {
         contractId: inspection.contractId?.toString(),
         templateId: inspection.templateId?.toString(),
         type: inspection.type,
+        scheduleType: inspection.scheduleType,
         title: inspection.title,
         scheduledAt: inspection.scheduledAt,
         status: inspection.status,
@@ -4070,7 +4103,7 @@ router.post('/', authMiddleware, async (req, res) => {
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, scheduledAt, notes, status } = req.body;
+    const { title, scheduledAt, notes, status, scheduleType } = req.body;
 
     // Check if inspection exists
     const inspection = await prisma.Inspection.findFirst({
@@ -4094,6 +4127,17 @@ router.put('/:id', authMiddleware, async (req, res) => {
       updateData.scheduledAt = scheduledAt ? new Date(scheduledAt) : null;
     if (notes !== undefined) updateData.notes = notes;
     if (status !== undefined) updateData.status = status;
+    if (scheduleType !== undefined) {
+      const normalizedScheduleType = scheduleType.toUpperCase();
+      const allowedScheduleTypes = ['DAILY', 'SCHEDULED'];
+      if (!allowedScheduleTypes.includes(normalizedScheduleType)) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          message: `scheduleType must be one of: ${allowedScheduleTypes.join(', ')}`,
+        });
+      }
+      updateData.scheduleType = normalizedScheduleType;
+    }
     updateData.updatedBy = BigInt(req.user.id);
 
     // Update inspection
@@ -4133,6 +4177,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
         contractId: updatedInspection.contractId?.toString(),
         templateId: updatedInspection.templateId?.toString(),
         type: updatedInspection.type,
+        scheduleType: updatedInspection.scheduleType,
         title: updatedInspection.title,
         scheduledAt: updatedInspection.scheduledAt,
         status: updatedInspection.status,

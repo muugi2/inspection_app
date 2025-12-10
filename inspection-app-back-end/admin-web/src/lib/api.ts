@@ -373,6 +373,7 @@ export const apiService = {
       contractId?: string;
       templateId?: string;
       type: string;
+      scheduleType?: string;
       title: string;
       scheduledAt?: string;
       notes?: string;
@@ -386,6 +387,7 @@ export const apiService = {
       scheduledAt?: string;
       notes?: string;
       status?: string;
+      scheduleType?: string;
     }) => {
       const url = API_ENDPOINTS.INSPECTIONS.UPDATE.replace(':id', id);
       const response = await apiClient.put(url, data);

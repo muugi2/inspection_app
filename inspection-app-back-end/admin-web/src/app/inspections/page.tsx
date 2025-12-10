@@ -247,41 +247,75 @@ export default function InspectionsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    console.log('🔍 [Admin-web] Form submit started');
+    console.log('  - selectedDevice:', selectedDevice);
+    console.log('  - title:', title);
+    console.log('  - scheduleType:', scheduleType);
 
     if (!selectedDevice || !title) {
+      console.error('❌ [Admin-web] Validation failed: Device or title missing');
       alert('Device and title are required');
       return;
     }
 
+    console.log('✅ [Admin-web] Validation passed, preparing data...');
+
     try {
       setLoading(true);
 
+      // Ensure scheduleType is always set (default to SCHEDULED if not set)
+      // scheduleType should be 'DAILY' or 'SCHEDULED' from the dropdown
+      const finalScheduleType = (scheduleType && typeof scheduleType === 'string' && scheduleType.trim() !== '') 
+        ? scheduleType.trim().toUpperCase() 
+        : 'SCHEDULED';
+      
+      // Validate scheduleType
+      if (finalScheduleType !== 'DAILY' && finalScheduleType !== 'SCHEDULED') {
+        console.error('❌ [Admin-web] Invalid scheduleType:', finalScheduleType);
+        alert('Үзлэгийн төрөл буруу байна. Дахин сонгоно уу.');
+        return;
+      }
+      
       const data = {
         orgId: selectedOrg,
         deviceId: selectedDevice,
         type: selectedType,
-        scheduleType: scheduleType,
+        scheduleType: finalScheduleType, // Ensure this is always 'DAILY' or 'SCHEDULED'
         title,
         scheduledAt: scheduledAt || undefined,
         notes: notes || undefined,
         templateId: selectedTemplate || undefined,
       };
 
+      // Debug: Log scheduleType before sending
+      console.log('🔍 [Admin-web] Submitting inspection:');
+      console.log('  - scheduleType state (raw):', scheduleType, '(type:', typeof scheduleType, ')');
+      console.log('  - finalScheduleType:', finalScheduleType);
+      console.log('  - scheduleType in data:', data.scheduleType);
+      console.log('  - Full data:', JSON.stringify(data, null, 2));
+
       if (editingId) {
         await apiService.inspections.update(editingId, {
           title: data.title,
           scheduledAt: data.scheduledAt,
           notes: data.notes,
+          scheduleType: data.scheduleType, // scheduleType нэмэх
         });
         alert('✅ Үзлэг амжилттай шинэчлэгдлээ');
       } else {
-        await apiService.inspections.create(data);
+        console.log('➕ [Admin-web] Creating new inspection...');
+        console.log('📤 [Admin-web] Sending data to API:', JSON.stringify(data, null, 2));
+        const response = await apiService.inspections.create(data);
+        console.log('✅ [Admin-web] Inspection created successfully:', response);
         alert('✅ Үзлэг амжилттай үүслээ');
       }
 
       handleCloseModal();
       fetchInspections();
     } catch (error: any) {
+      console.error('❌ [Admin-web] Error submitting inspection:', error);
+      console.error('❌ [Admin-web] Error response:', error.response?.data);
       const errorMessage = error.response?.data?.message || error.response?.data?.error || error.message || 'Үзлэг хадгалахад алдаа гарлаа';
       alert('❌ ' + errorMessage);
     } finally {
@@ -561,7 +595,11 @@ export default function InspectionsPage() {
                 </label>
                 <select
                   value={scheduleType}
-                  onChange={(e) => setScheduleType(e.target.value)}
+                  onChange={(e) => {
+                    const newValue = e.target.value;
+                    console.log('🔍 [Admin-web] ScheduleType changed:', newValue);
+                    setScheduleType(newValue);
+                  }}
                   className="w-full p-3 border rounded-lg"
                   required
                   disabled={!!editingId}

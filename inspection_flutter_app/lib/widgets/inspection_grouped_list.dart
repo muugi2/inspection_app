@@ -60,22 +60,36 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
     });
     try {
       // Load daily inspections (DAILY scheduleType)
+      debugPrint('🔍 Loading DAILY inspections...');
       final dailyResponse = await InspectionAPI.getInspectionsByScheduleType('DAILY');
       final dailyRawItems = ApiResponseParser.parseListResponse(dailyResponse);
+      debugPrint('📋 DAILY raw items count: ${dailyRawItems.length}');
+      if (dailyRawItems.isNotEmpty) {
+        debugPrint('📋 First DAILY item: ${dailyRawItems[0]}');
+      }
       final dailyParsed = await _parseResponseWithDeviceInfo(dailyRawItems);
+      debugPrint('✅ DAILY parsed items count: ${dailyParsed.length}');
 
       // Load scheduled inspections (SCHEDULED scheduleType)
+      debugPrint('🔍 Loading SCHEDULED inspections...');
       final scheduledResponse = await InspectionAPI.getInspectionsByScheduleType('SCHEDULED');
       final scheduledRawItems = ApiResponseParser.parseListResponse(scheduledResponse);
+      debugPrint('📋 SCHEDULED raw items count: ${scheduledRawItems.length}');
+      if (scheduledRawItems.isNotEmpty) {
+        debugPrint('📋 First SCHEDULED item: ${scheduledRawItems[0]}');
+      }
       final scheduledParsed = await _parseResponseWithDeviceInfo(scheduledRawItems);
+      debugPrint('✅ SCHEDULED parsed items count: ${scheduledParsed.length}');
 
       setState(() {
         _dailyItems = dailyParsed;
         _scheduledItems = scheduledParsed;
         _loading = false;
       });
+      
+      debugPrint('📊 Final state: DAILY=${dailyParsed.length}, SCHEDULED=${scheduledParsed.length}');
     } catch (e) {
-      debugPrint('Error loading inspections: $e');
+      debugPrint('❌ Error loading inspections: $e');
       setState(() {
         _error = 'Ачаалах үед алдаа гарлаа: $e';
         _loading = false;
@@ -159,6 +173,9 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
             final String type =
                 (raw['type'] ?? raw['inspectionType'] ?? 'inspection').toString();
             final String? scheduleType = raw['scheduleType']?.toString();
+            
+            // Debug: Log scheduleType for each item
+            debugPrint('🔍 Parsing inspection: id=$id, scheduleType=$scheduleType, title=$title');
 
             final String? deviceId = (raw['deviceId'] ?? raw['device_id'])?.toString();
 
