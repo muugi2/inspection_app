@@ -2651,13 +2651,35 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
 
     console.log('Verified inspection ID:', inspection.id.toString());
 
+    // Get answer_id from inspection_answer
+    const answer = await prisma.InspectionAnswer.findFirst({
+      where: { inspectionId },
+      orderBy: { answeredAt: 'desc' },
+      select: { id: true },
+    });
+
+    if (!answer) {
+      console.log('No inspection answer found for inspection:', inspectionId.toString());
+      return res.json({
+        message: 'No images found',
+        data: {
+          inspectionId: inspection.id.toString(),
+          images: [],
+          count: 0,
+        },
+      });
+    }
+
+    const answerId = answer.id;
+    console.log('Found answer_id:', answerId.toString());
+
     // Build WHERE conditions dynamically
     let query;
     if (fieldId && section) {
       query = prisma.$queryRaw`
         SELECT 
           id,
-          inspection_id,
+          answer_id,
           field_id,
           section,
           image_order,
@@ -2667,7 +2689,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
           created_at,
           updated_at
         FROM inspection_question_images
-        WHERE inspection_id = ${inspectionId}
+        WHERE answer_id = ${answerId}
           AND field_id = ${fieldId}
           AND section = ${section}
         ORDER BY section, field_id, image_order ASC
@@ -2676,7 +2698,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
       query = prisma.$queryRaw`
         SELECT 
           id,
-          inspection_id,
+          answer_id,
           field_id,
           section,
           image_order,
@@ -2686,7 +2708,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
           created_at,
           updated_at
         FROM inspection_question_images
-        WHERE inspection_id = ${inspectionId}
+        WHERE answer_id = ${answerId}
           AND field_id = ${fieldId}
         ORDER BY section, field_id, image_order ASC
       `;
@@ -2694,7 +2716,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
       query = prisma.$queryRaw`
         SELECT 
           id,
-          inspection_id,
+          answer_id,
           field_id,
           section,
           image_order,
@@ -2704,7 +2726,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
           created_at,
           updated_at
         FROM inspection_question_images
-        WHERE inspection_id = ${inspectionId}
+        WHERE answer_id = ${answerId}
           AND section = ${section}
         ORDER BY section, field_id, image_order ASC
       `;
@@ -2713,7 +2735,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
       query = prisma.$queryRaw`
         SELECT 
           id,
-          inspection_id,
+          answer_id,
           field_id,
           section,
           image_order,
@@ -2723,7 +2745,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
           created_at,
           updated_at
         FROM inspection_question_images
-        WHERE inspection_id = ${inspectionId}
+        WHERE answer_id = ${answerId}
         ORDER BY section, field_id, image_order ASC
       `;
 
@@ -2757,7 +2779,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
       );
       console.log('Sample image data:', {
         id: images[0].id?.toString(),
-        inspection_id: images[0].inspection_id?.toString(),
+        answer_id: images[0].answer_id?.toString(),
         field_id: images[0].field_id,
         section: images[0].section,
       });
@@ -2779,7 +2801,7 @@ router.get('/:id/question-images', authMiddleware, async (req, res) => {
 
         return {
           id: img.id ? img.id.toString() : null,
-          inspectionId: img.inspection_id ? img.inspection_id.toString() : null,
+          answerId: img.answer_id ? img.answer_id.toString() : null,
           fieldId: img.field_id,
           section: img.section,
           order: Number(img.image_order),
@@ -3691,6 +3713,214 @@ router.get('/devices/:id', authMiddleware, async (req, res) => {
 });
 
 // =============================================================================
+// GET INSPECTIONS WITH REPAIRS NEEDED
+// =============================================================================
+
+/**
+ * GET /api/inspections/repairs-needed
+ * Get all inspections that have items requiring repair
+ * Analyzes inspection_answer.answers JSON to find statuses that need repair
+ * IMPORTANT: This route must be registered BEFORE /:id route to avoid route conflicts
+ */
+router.get('/repairs-needed', authMiddleware, async (req, res) => {
+  try {
+    console.log('🔍 [GET /api/inspections/repairs-needed] Request received');
+    console.log('   User ID:', req.user?.id);
+    console.log('   User orgId:', req.user?.orgId);
+    
+    const userId = BigInt(req.user.id);
+    const user = await prisma.User.findUnique({
+      where: { id: userId },
+      select: { orgId: true },
+    });
+
+    if (!user) {
+      console.error('❌ [GET /api/inspections/repairs-needed] User not found');
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'User not found',
+      });
+    }
+
+    console.log('✅ [GET /api/inspections/repairs-needed] User found, orgId:', user.orgId.toString());
+
+    // Get inspections accessible by user
+    console.log('🔍 [GET /api/inspections/repairs-needed] Fetching inspections...');
+    const inspections = await prisma.Inspection.findMany({
+      where: {
+        OR: [
+          { orgId: user.orgId },
+          { assignedTo: userId }
+        ],
+        deletedAt: null,
+      },
+      include: {
+        device: {
+          select: {
+            id: true,
+            serialNumber: true,
+            assetTag: true,
+            model: {
+              select: {
+                manufacturer: true,
+                model: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    console.log(`✅ [GET /api/inspections/repairs-needed] Found ${inspections.length} inspection(s)`);
+
+    const repairsNeeded = [];
+
+    // Get all completed/verified repairs to filter them out
+    const completedRepairs = await prisma.Repair.findMany({
+      where: {
+        repairStatus: {
+          in: ['COMPLETED', 'VERIFIED']
+        }
+      },
+      select: {
+        inspectionId: true,
+        fieldId: true,
+        section: true,
+      },
+    });
+
+    // Create a set of completed repair keys (inspectionId_fieldId_section) for fast lookup
+    const completedRepairKeys = new Set(
+      completedRepairs.map(r => `${r.inspectionId.toString()}_${r.fieldId}_${r.section}`)
+    );
+
+    console.log(`🔍 Found ${completedRepairs.length} completed/verified repair(s) to filter out`);
+
+    // Analyze each inspection's answers
+    for (const inspection of inspections) {
+      const answers = await prisma.InspectionAnswer.findMany({
+        where: { inspectionId: inspection.id },
+        orderBy: { answeredAt: 'asc' },
+      });
+
+      if (answers.length === 0) continue;
+
+      // Get latest answer
+      const latestAnswer = answers[answers.length - 1];
+      const answerData = latestAnswer.answers || {};
+
+      // Support multiple JSON structures
+      let sections = {};
+      if (answerData.data && typeof answerData.data === 'object') {
+        sections = answerData.data;
+      } else if (answerData.answers && typeof answerData.answers === 'object') {
+        const sectionName = answerData.section || answerData.sectionTitle || 'unknown';
+        sections[sectionName] = answerData.answers;
+      } else {
+        sections = answerData;
+      }
+
+      // Find items requiring repair
+      const inspectionRepairs = [];
+      for (const [sectionName, sectionData] of Object.entries(sections)) {
+        // Skip metadata and other non-section keys
+        if (
+          sectionName === 'metadata' ||
+          sectionName === 'signatures' ||
+          sectionName === 'remarks' ||
+          !sectionData ||
+          typeof sectionData !== 'object'
+        ) {
+          continue;
+        }
+
+        // Check each field in the section
+        for (const [fieldId, fieldValue] of Object.entries(sectionData)) {
+          // Skip non-object values and excluded keys
+          if (
+            typeof fieldValue !== 'object' ||
+            fieldValue === null ||
+            ['sectionStatus', 'completedAt', 'section', 'sessionStartedAt', 'lastUpdatedAt'].includes(fieldId)
+          ) {
+            continue;
+          }
+
+          // Get status
+          const status = fieldValue.status ||
+                        fieldValue.answer ||
+                        fieldValue.value ||
+                        (Array.isArray(fieldValue.selectedOptions) && fieldValue.selectedOptions[0]) ||
+                        '';
+          const questionText = fieldValue.question ||
+                             fieldValue.questionText ||
+                             fieldId ||
+                             '';
+
+          // Check if repair is needed (status is not "Хэвийн" or "Цэвэр")
+          const statusTrimmed = status ? status.toString().trim() : '';
+          if (
+            statusTrimmed !== '' &&
+            statusTrimmed !== 'Хэвийн' &&
+            statusTrimmed !== 'Цэвэр' &&
+            statusTrimmed.toLowerCase() !== 'normal' &&
+            statusTrimmed.toLowerCase() !== 'clean'
+          ) {
+            // Check if this repair has already been completed or verified
+            const repairKey = `${inspection.id.toString()}_${fieldId}_${sectionName}`;
+            const isRepairCompleted = completedRepairKeys.has(repairKey);
+
+            if (!isRepairCompleted) {
+              inspectionRepairs.push({
+                fieldId,
+                section: sectionName,
+                questionText,
+                originalStatus: statusTrimmed,
+                description: fieldValue.comment || fieldValue.textAnswer || fieldValue.notes || null,
+              });
+            } else {
+              console.log(`⏭️  Skipping completed repair: ${repairKey}`);
+            }
+          }
+        }
+      }
+
+      // Only include inspections with repairs needed
+      if (inspectionRepairs.length > 0) {
+        repairsNeeded.push({
+          inspection: {
+            id: inspection.id.toString(),
+            title: inspection.title,
+            status: inspection.status,
+            device: inspection.device ? {
+              id: inspection.device.id.toString(),
+              serialNumber: inspection.device.serialNumber,
+              assetTag: inspection.device.assetTag,
+              model: inspection.device.model,
+            } : null,
+          },
+          repairs: inspectionRepairs,
+          totalRepairs: inspectionRepairs.length,
+        });
+      }
+    }
+
+    console.log(`✅ [GET /api/inspections/repairs-needed] Found ${repairsNeeded.length} inspection(s) with repairs needed`);
+
+    return res.json({
+      message: 'Inspections with repairs needed retrieved successfully',
+      data: serializeBigInt(repairsNeeded),
+      count: repairsNeeded.length,
+    });
+  } catch (error) {
+    console.error('❌ [GET /api/inspections/repairs-needed] Error:', error);
+    console.error('   Error message:', error.message);
+    console.error('   Error stack:', error.stack);
+    handleError(res, error, 'get inspections with repairs needed');
+  }
+});
+
+// =============================================================================
 // GET INSPECTIONS BY DEVICE
 // =============================================================================
 
@@ -3778,6 +4008,16 @@ router.get('/device/:deviceId', authMiddleware, async (req, res) => {
 // GET inspection by ID
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
+    // Check if this is actually a repairs-needed request (route conflict check)
+    if (req.params.id === 'repairs-needed') {
+      console.error('⚠️ [GET /:id] Route conflict detected! "repairs-needed" was matched by /:id route');
+      return res.status(404).json({
+        error: 'Route conflict',
+        message: 'The repairs-needed route should be registered before /:id route',
+      });
+    }
+    
+    console.log(`🔍 [GET /api/inspections/:id] Request received, id: ${req.params.id}`);
     const inspectionId = BigInt(req.params.id);
     const inspection = await verifyInspectionAccess(
       inspectionId,

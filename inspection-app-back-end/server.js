@@ -8,9 +8,18 @@ const path = require('path');
 // Load environment variables
 // Priority: 1. Environment variables (Docker/Production), 2. config.env file (Development)
 // Docker container дотор environment variables байгаа бол config.env унших шаардлагагүй
+console.log('🔍 Loading environment variables...');
+console.log('   DB_HOST:', process.env.DB_HOST || 'not set');
+console.log('   PORT:', process.env.PORT || 'not set');
+
 if (!process.env.DB_HOST && !process.env.PORT) {
   // Development mode - host дээр ажиллах үед config.env унших
+  console.log('   📄 Loading config.env file...');
   dotenv.config({ path: path.join(__dirname, 'config.env') });
+  console.log('   ✅ config.env loaded');
+  console.log('   PORT after loading:', process.env.PORT);
+} else {
+  console.log('   ℹ️  Using environment variables (Docker/Production mode)');
 }
 
 // Set DATABASE_URL for Prisma
@@ -19,11 +28,19 @@ if (!process.env.DATABASE_URL) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+// Default port: 4555 (to match Flutter app and admin-web expectations)
+// Docker uses 3000 internally, but maps to 4555 externally
+const PORT = process.env.PORT || 4555;
 
 // Middleware
 app.use(helmet()); // Security headers
-app.use(cors()); // Enable CORS
+// CORS configuration - allow all origins for development
+app.use(cors({
+  origin: '*', // Allow all origins
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(morgan('combined')); // Logging
 app.use(express.json({ limit: '50mb' })); // Parse JSON bodies (increased limit for image uploads)
 app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Parse URL-encoded bodies (increased limit for image uploads)
@@ -43,9 +60,10 @@ app.use(
 // Routes
 app.get('/', (req, res) => {
   res.json({
-    message: 'Welcome to Inspection App API',
+    message: 'Welcome to Inspection App API - Hot Reload Active! 🔥',
     version: '1.0.0',
     status: 'running',
+    hotReload: true,
   });
 });
 
@@ -59,6 +77,7 @@ app.get('/health', (req, res) => {
 
 // API routes
 // IMPORTANT: More specific routes should be registered before more general ones
+console.log('📋 Registering API routes...');
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/upload', require('./routes/upload')); // Image upload endpoint
 app.use('/api/inspections', require('./routes/inspections'));
@@ -71,11 +90,33 @@ app.use('/api/devices', require('./routes/devices'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/documents', require('./routes/documents'));
+try {
+  app.use('/api/repairs', require('./routes/repairs'));
+  console.log('✅ Repairs route registered successfully');
+} catch (error) {
+  console.error('❌ Failed to register repairs route:', error);
+  console.error('   Error message:', error.message);
+  console.error('   Error stack:', error.stack);
+}
 
 // 404 handler
 app.use('*', (req, res) => {
   console.log(`[server] ❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
   console.log(`[server] Request path: ${req.path}, Base URL: ${req.baseUrl}`);
+  console.log(`[server] Registered routes:`);
+  console.log(`[server]   - /api/auth`);
+  console.log(`[server]   - /api/upload`);
+  console.log(`[server]   - /api/inspections`);
+  console.log(`[server]   - /api/inspection-answers`);
+  console.log(`[server]   - /api/organizations`);
+  console.log(`[server]   - /api/sites`);
+  console.log(`[server]   - /api/contracts`);
+  console.log(`[server]   - /api/device-models`);
+  console.log(`[server]   - /api/devices`);
+  console.log(`[server]   - /api/users`);
+  console.log(`[server]   - /api/templates`);
+  console.log(`[server]   - /api/documents`);
+  console.log(`[server]   - /api/repairs`);
   res.status(404).json({
     error: 'Route not found',
     message: `Cannot ${req.method} ${req.originalUrl}`,
@@ -97,10 +138,14 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+// Listen on all network interfaces (0.0.0.0) to allow network access
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📱 API available at http://localhost:${PORT}`);
+  console.log(`📱 API available at http://192.168.1.71:${PORT}`);
   console.log(`🏥 Health check at http://localhost:${PORT}/health`);
+  console.log(`🌐 Network access: http://${require('os').networkInterfaces()['Ethernet']?.[0]?.address || '0.0.0.0'}:${PORT}`);
 });
 
 module.exports = app;

@@ -38,6 +38,11 @@ export default function TopNavbar() {
       path: '/inspections',
       icon: '📋',
     },
+    {
+      name: 'Засвар',
+      path: '/repairs',
+      icon: '🔨',
+    },
   ];
 
   const isActive = (path: string) => pathname === path;
@@ -51,7 +56,7 @@ export default function TopNavbar() {
   return (
     <nav className="bg-white border-b border-gray-200 shadow-sm">
       <div className="px-6 py-3">
-        <div className="grid grid-cols-6 gap-2">
+        <div className="grid grid-cols-7 gap-2">
           {reportMenuItems.map((item) => (
             <button
               key={item.path}

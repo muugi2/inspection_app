@@ -4,7 +4,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/config/app_config.dart';
-import 'package:app/services/ftp_service.dart';
 
 // Dio instance with centralized configuration
 final Dio api = Dio(
@@ -616,6 +615,41 @@ class InspectionAPI {
     return response.data;
   }
 
+  // Get inspections with repairs needed (from inspection_answer JSON)
+  static Future<dynamic> getInspectionsWithRepairsNeeded() async {
+    try {
+      debugPrint('🔍 [InspectionAPI.getInspectionsWithRepairsNeeded] Making request');
+      final response = await api.get("/api/inspections/repairs-needed");
+      debugPrint('✅ [InspectionAPI.getInspectionsWithRepairsNeeded] Response received');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ [InspectionAPI.getInspectionsWithRepairsNeeded] Error: $e');
+      rethrow;
+    }
+  }
+
+  // Get question images for an inspection
+  static Future<dynamic> getQuestionImages(
+    String inspectionId, {
+    String? fieldId,
+    String? section,
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{};
+      if (fieldId != null) queryParams['fieldId'] = fieldId;
+      if (section != null) queryParams['section'] = section;
+
+      final response = await api.get(
+        "/api/inspections/$inspectionId/question-images",
+        queryParameters: queryParams.isEmpty ? null : queryParams,
+      );
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting question images: $e');
+      rethrow;
+    }
+  }
+
   // Get section review data (saved answers)
   static Future<dynamic> getSectionReviewData(
     String inspectionId,
@@ -820,6 +854,122 @@ class InspectionAPI {
     } catch (e, stackTrace) {
       debugPrint('❌ Error uploading question images: $e');
       debugPrint('Stack trace: $stackTrace');
+      rethrow;
+    }
+  }
+}
+
+// Repairs API methods
+class RepairAPI {
+  // Analyze inspection and create repairs
+  static Future<dynamic> analyzeRepairs(String inspectionId) async {
+    final response = await api.post(
+      "/api/repairs/analyze/$inspectionId",
+    );
+    return response.data;
+  }
+
+  // Get all repairs
+  static Future<dynamic> getAll({
+    String? inspectionId,
+    String? status,
+    int? page,
+    int? limit,
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{};
+      if (inspectionId != null) queryParams['inspectionId'] = inspectionId;
+      if (status != null) queryParams['status'] = status;
+      if (page != null) queryParams['page'] = page;
+      if (limit != null) queryParams['limit'] = limit;
+
+      debugPrint('🔍 [RepairAPI.getAll] Making request');
+      debugPrint('   URL: /api/repairs');
+      debugPrint('   Query params: $queryParams');
+      debugPrint('   Base URL: ${api.options.baseUrl}');
+      debugPrint('   Full URL: ${api.options.baseUrl}/api/repairs');
+
+      final response = await api.get(
+        "/api/repairs",
+        queryParameters: queryParams.isEmpty ? null : queryParams,
+      );
+      
+      debugPrint('✅ [RepairAPI.getAll] Response received');
+      debugPrint('   Status code: ${response.statusCode}');
+      debugPrint('   Response keys: ${response.data?.keys ?? 'N/A'}');
+      
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ [RepairAPI.getAll] Error occurred');
+      debugPrint('   Error: $e');
+      debugPrint('   Error type: ${e.runtimeType}');
+      if (e is DioException) {
+        debugPrint('   DioException details:');
+        debugPrint('     Type: ${e.type}');
+        debugPrint('     Message: ${e.message}');
+        debugPrint('     Response: ${e.response}');
+        debugPrint('     Request path: ${e.requestOptions.path}');
+        debugPrint('     Request base URL: ${e.requestOptions.baseUrl}');
+      }
+      rethrow;
+    }
+  }
+
+  // Get repair by ID
+  static Future<dynamic> getById(String repairId) async {
+    final response = await api.get("/api/repairs/$repairId");
+    return response.data;
+  }
+
+  // Get repairs for an inspection
+  static Future<dynamic> getByInspection(String inspectionId) async {
+    final response = await api.get(
+      "/api/repairs/inspection/$inspectionId",
+    );
+    return response.data;
+  }
+
+  // Update repair
+  static Future<dynamic> update(
+    String repairId,
+    Map<String, dynamic> data,
+  ) async {
+    final response = await api.put(
+      "/api/repairs/$repairId",
+      data: data,
+    );
+    return response.data;
+  }
+
+  // Upload repair images
+  static Future<dynamic> uploadImages({
+    required String repairId,
+    required List<File> images,
+  }) async {
+    try {
+      final formData = FormData();
+
+      for (int i = 0; i < images.length; i++) {
+        final file = images[i];
+        final fileName =
+            'repair_${repairId}_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+
+        formData.files.add(
+          MapEntry(
+            'images',
+            await MultipartFile.fromFile(file.path, filename: fileName),
+          ),
+        );
+      }
+
+      final response = await api.post(
+        "/api/repairs/$repairId/upload-images",
+        data: formData,
+        options: Options(headers: {'Content-Type': 'multipart/form-data'}),
+      );
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error uploading repair images: $e');
       rethrow;
     }
   }

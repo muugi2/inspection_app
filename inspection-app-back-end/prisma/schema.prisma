@@ -51,6 +51,8 @@ model User {
   inspectionQuestionAnswers InspectionQuestionAnswer[]
   attachments               Attachment[]
   auditLogs                 AuditLog[]
+  repairedItems             Repair[]                   @relation("RepairRepairedBy")
+  verifiedItems             Repair[]                   @relation("RepairVerifiedBy")
 
   @@index([orgId], map: "users_org_id_fkey")
   @@index([roleId], map: "users_role_id_fkey")
@@ -191,6 +193,7 @@ model Inspection {
   answers         InspectionAnswer[]
   questionAnswers InspectionQuestionAnswer[]
   attachments     Attachment[]
+  repairs         Repair[]
 
   @@index([orgId], map: "idx_inspections_org")
   @@index([status], map: "idx_inspections_status")
@@ -394,4 +397,55 @@ enum InspectionStatus {
 enum InspectionScheduleType {
   DAILY
   SCHEDULED
+}
+
+enum RepairStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  VERIFIED
+}
+
+model Repair {
+  id               BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  inspectionId     BigInt        @map("inspection_id") @db.UnsignedBigInt
+  fieldId          String        @map("field_id") @db.VarChar(100)
+  section          String        @db.VarChar(200)
+  questionText     String        @map("question_text") @db.Text
+  originalStatus   String?       @map("original_status") @db.VarChar(50)
+  repairDescription String?      @map("repair_description") @db.Text
+  repairStatus     RepairStatus  @default(PENDING) @map("repair_status")
+  repairedBy       BigInt?       @map("repaired_by") @db.UnsignedBigInt
+  repairedAt       DateTime?     @map("repaired_at")
+  verifiedBy       BigInt?       @map("verified_by") @db.UnsignedBigInt
+  verifiedAt       DateTime?     @map("verified_at")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  inspection Inspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  repairer   User?         @relation("RepairRepairedBy", fields: [repairedBy], references: [id], onDelete: SetNull)
+  verifier   User?         @relation("RepairVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  images     RepairImage[]
+
+  @@index([inspectionId], map: "idx_repairs_inspection")
+  @@index([repairedBy], map: "idx_repairs_repairer")
+  @@index([verifiedBy], map: "idx_repairs_verifier")
+  @@index([repairStatus], map: "idx_repairs_status")
+  @@index([inspectionId, fieldId], map: "idx_repairs_inspection_field")
+  @@map("repairs")
+}
+
+model RepairImage {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  repairId   BigInt   @map("repair_id") @db.UnsignedBigInt
+  imageUrl   String   @map("image_url") @db.VarChar(500)
+  fileName   String?  @map("file_name") @db.VarChar(255)
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  // Relations
+  repair Repair @relation(fields: [repairId], references: [id], onDelete: Cascade)
+
+  @@index([repairId], map: "idx_repair_images_repair")
+  @@map("repair_images")
 }

@@ -6,8 +6,8 @@ WORKDIR /usr/src/app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (including dev dependencies for nodemon)
+RUN npm ci
 
 # Copy application code
 COPY . .
@@ -33,5 +33,6 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node healthcheck.js
 
-# Start the application directly (without entrypoint script)
-CMD ["npm", "start"]
+# Start the application with nodemon for development or node for production
+# Use dev:docker script for Docker environment with volume mount
+CMD ["sh", "-c", "if [ \"$NODE_ENV\" = \"development\" ]; then npm run dev:docker; else npm start; fi"]

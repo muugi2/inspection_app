@@ -63,7 +63,7 @@ services:
     # expose:
     #   - "3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
       - PORT=3000
       # Database - Docker network доторх MySQL
       - DB_HOST=mysql
@@ -97,7 +97,11 @@ services:
       # File storage - host дээрх C:/ftp_data folder-ийг container доторх /app/uploads руу mount
       # Windows absolute path ашиглах
       - C:/ftp_data:/app/uploads:rw
-      - /app/node_modules
+      # Development: Code folder-ийг mount хийж real-time өөрчлөлт хийх
+      # Энэ нь development mode-д ажиллана, production-д comment хийнэ
+      - ./:/usr/src/app:rw
+      # node_modules-ийг container-ийн өөрийнхийг ашиглуулах (host-оос override хийхгүй)
+      - /usr/src/app/node_modules
 
   # Ngrok service - backend-ийг public URL-аар хандах боломжтой болгох
   ngrok:

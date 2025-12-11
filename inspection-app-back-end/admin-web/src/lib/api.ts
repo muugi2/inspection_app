@@ -159,6 +159,14 @@ export const API_ENDPOINTS = {
     ANSWER_DOCX: '/api/documents/answers/:id/docx',
     MONTHLY_REPORT: '/api/documents/sites/:siteId/monthly-report',
   },
+  REPAIRS: {
+    LIST: '/api/repairs',
+    DETAIL: '/api/repairs/:id',
+    BY_INSPECTION: '/api/repairs/inspection/:inspectionId',
+    ANALYZE: '/api/repairs/analyze/:inspectionId',
+    UPDATE: '/api/repairs/:id',
+    UPLOAD_IMAGES: '/api/repairs/:id/upload-images',
+  },
 };
 
 // API service functions
@@ -638,6 +646,62 @@ export const apiService = {
         }
         throw error;
       }
+    },
+  },
+
+  // Repairs services
+  repairs: {
+    getAll: async (params?: { 
+      inspectionId?: string; 
+      status?: string; 
+      page?: number; 
+      limit?: number;
+    }) => {
+      const response = await apiClient.get(API_ENDPOINTS.REPAIRS.LIST, { params });
+      return response.data;
+    },
+
+    getById: async (id: string) => {
+      const url = API_ENDPOINTS.REPAIRS.DETAIL.replace(':id', id);
+      const response = await apiClient.get(url);
+      return response.data;
+    },
+
+    getByInspection: async (inspectionId: string) => {
+      const url = API_ENDPOINTS.REPAIRS.BY_INSPECTION.replace(':inspectionId', inspectionId);
+      const response = await apiClient.get(url);
+      return response.data;
+    },
+
+    analyze: async (inspectionId: string) => {
+      const url = API_ENDPOINTS.REPAIRS.ANALYZE.replace(':inspectionId', inspectionId);
+      const response = await apiClient.post(url);
+      return response.data;
+    },
+
+    update: async (id: string, data: {
+      description?: string;
+      repairStatus?: string;
+      repairedAt?: string;
+      verifiedAt?: string;
+    }) => {
+      const url = API_ENDPOINTS.REPAIRS.UPDATE.replace(':id', id);
+      const response = await apiClient.put(url, data);
+      return response.data;
+    },
+
+    uploadImages: async (id: string, images: File[]) => {
+      const url = API_ENDPOINTS.REPAIRS.UPLOAD_IMAGES.replace(':id', id);
+      const formData = new FormData();
+      images.forEach((image) => {
+        formData.append('images', image);
+      });
+      const response = await apiClient.post(url, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return response.data;
     },
   },
 };

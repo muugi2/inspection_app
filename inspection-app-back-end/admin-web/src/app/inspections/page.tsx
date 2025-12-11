@@ -323,6 +323,28 @@ export default function InspectionsPage() {
     }
   };
 
+  const handleAnalyzeRepairs = async (inspectionId: string) => {
+    if (!confirm('Энэ үзлэгийг шинжилж, засвар шаардлагатай хэсгүүдэд засварууд үүсгэх үү?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await apiService.repairs.analyze(inspectionId);
+      const repairsCreated = response.data?.repairsCreated || 0;
+      
+      alert(`✅ Амжилттай! ${repairsCreated} засвар үүсгэгдлээ.`);
+      
+      // Navigate to repairs page
+      window.location.href = '/repairs';
+    } catch (error: any) {
+      console.error('Failed to analyze repairs:', error);
+      alert('❌ ' + (error.response?.data?.message || error.message || 'Засвар үүсгэхэд алдаа гарлаа'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm('Та энэ үзлэгийг устгахдаа итгэлтэй байна уу?\n\nАнхааруулга: Энэ үйлдлийг буцаах боломжгүй. Бүх хариулт, зураг устгагдана.')) {
       return;
@@ -499,6 +521,13 @@ export default function InspectionsPage() {
                     className="text-blue-600 hover:text-blue-900"
                   >
                     Томилох
+                  </button>
+                  <button
+                    onClick={() => handleAnalyzeRepairs(inspection.id)}
+                    className="text-orange-600 hover:text-orange-900"
+                    title="Засвар үүсгэх"
+                  >
+                    🔨 Засвар
                   </button>
                   <button
                     onClick={() => handleDelete(inspection.id)}
