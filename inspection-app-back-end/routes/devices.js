@@ -22,12 +22,20 @@ router.get('/organization/:orgId', authMiddleware, async (req, res) => {
             id: true,
             manufacturer: true,
             model: true,
+            deviceType: true,
           },
         },
         site: {
           select: {
             id: true,
             name: true,
+          },
+        },
+        contract: {
+          select: {
+            id: true,
+            contractName: true,
+            contractNumber: true,
           },
         },
       },
@@ -46,6 +54,7 @@ router.get('/organization/:orgId', authMiddleware, async (req, res) => {
         id: device.model.id.toString(),
         manufacturer: device.model.manufacturer,
         model: device.model.model,
+        deviceType: device.model.deviceType,
       } : null,
       site: device.site ? {
         id: device.site.id.toString(),

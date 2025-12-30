@@ -107,27 +107,18 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       _error = '';
     });
     try {
-      final dynamic resp = await TemplateAPI.getTemplates(
-        type: 'INSPECTION',
-        isActive: true,
-      );
-      // Support both list and object shapes. If list, pick the first active template.
+      // Use getInspectionTemplate to get the correct template for this inspection
+      final dynamic resp = await InspectionAPI.getInspectionTemplate(widget.inspectionId);
+      
+      // Extract template from response
       Map<String, dynamic>? tpl;
       if (resp is Map<String, dynamic>) {
-        final dynamic data =
-            resp['data'] ?? resp['result'] ?? resp['items'] ?? resp;
-        if (data is List && data.isNotEmpty) {
-          tpl = (data.first is Map<String, dynamic>)
-              ? data.first as Map<String, dynamic>
-              : null;
-        } else if (data is Map<String, dynamic>) {
-          tpl = data;
+        final dynamic data = resp['data'];
+        if (data is Map<String, dynamic>) {
+          tpl = data['template'];
         }
-      } else if (resp is List && resp.isNotEmpty) {
-        tpl = (resp.first is Map<String, dynamic>)
-            ? resp.first as Map<String, dynamic>
-            : null;
       }
+      
       final parsedSections = _extractSections(tpl);
       setState(() {
         _template = tpl;
@@ -848,6 +839,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
         templateName = 'Хугацаат үзлэг';
       }
     }
+
 
     // Хэрэв scheduleType олдохгүй бол зөвхөн "Үзлэг" гэж харуулах
     // Description эсвэл бусад fallback ашиглахгүй

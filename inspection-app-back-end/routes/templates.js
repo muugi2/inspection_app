@@ -65,6 +65,7 @@ router.get('/', authMiddleware, async (req, res) => {
   try {
     const {
       type,
+      deviceType,
       isActive,
       name,
       page = 1,
@@ -78,6 +79,10 @@ router.get('/', authMiddleware, async (req, res) => {
 
     if (type) {
       where.type = type.toUpperCase();
+    }
+
+    if (deviceType) {
+      where.deviceType = deviceType.toUpperCase();
     }
 
     if (isActive !== undefined) {
@@ -156,6 +161,7 @@ router.get('/', authMiddleware, async (req, res) => {
       },
       filters: {
         type,
+        deviceType,
         isActive,
         name,
         sortBy,

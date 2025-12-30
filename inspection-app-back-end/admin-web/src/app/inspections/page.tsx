@@ -37,12 +37,19 @@ interface Device {
   siteId?: string;
   contractId?: string;
   modelId?: string;
+  model?: {
+    id: string;
+    manufacturer: string;
+    model: string;
+    deviceType?: string;
+  };
 }
 
 interface Template {
   id: string;
   name: string;
   type: string;
+  deviceType?: string;
 }
 
 interface User {
@@ -143,6 +150,27 @@ export default function InspectionsPage() {
       setContracts([]);
     }
   }, [selectedOrg]);
+
+  // Auto-select template when device or type changes
+  useEffect(() => {
+    if (selectedDevice && selectedType && !editingId) {
+      const device = devices.find(d => d.id === selectedDevice);
+      const deviceType = device?.model?.deviceType;
+      
+      if (deviceType) {
+        // Find template matching device type and inspection type
+        const matchingTemplate = templates.find(
+          t => t.type === selectedType && 
+               (t.deviceType === deviceType || !t.deviceType) // Match deviceType or allow NULL templates
+        );
+        
+        if (matchingTemplate && !selectedTemplate) {
+          setSelectedTemplate(matchingTemplate.id);
+          console.log(`Auto-selected template: ${matchingTemplate.name} for device type: ${deviceType}`);
+        }
+      }
+    }
+  }, [selectedDevice, selectedType, devices, templates, selectedTemplate, editingId]);
 
   const fetchInspections = async () => {
     try {
@@ -661,7 +689,14 @@ export default function InspectionsPage() {
               {/* Template */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Template
+                  Template {(() => {
+                    const device = devices.find(d => d.id === selectedDevice);
+                    const deviceType = device?.model?.deviceType;
+                    if (deviceType) {
+                      return `(${deviceType === 'ANALOG' ? 'Аналог' : 'Дижитал'} төхөөрөмжид зориулсан)`;
+                    }
+                    return '';
+                  })()}
                 </label>
                 <select
                   value={selectedTemplate}
@@ -669,13 +704,35 @@ export default function InspectionsPage() {
                   className="w-full p-3 border rounded-lg"
                   disabled={!!editingId}
                 >
-                  <option value="">Сонгох</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
+                  <option value="">Автоматаар сонгох (device type-аар)</option>
+                  {(() => {
+                    const device = devices.find(d => d.id === selectedDevice);
+                    const deviceType = device?.model?.deviceType;
+                    // Filter templates by device type and inspection type
+                    const filteredTemplates = templates.filter(t => {
+                      const typeMatch = t.type === selectedType;
+                      const deviceTypeMatch = !t.deviceType || t.deviceType === deviceType;
+                      return typeMatch && deviceTypeMatch;
+                    });
+                    return filteredTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name} {template.deviceType ? `(${template.deviceType === 'ANALOG' ? 'Аналог' : 'Дижитал'})` : ''}
+                      </option>
+                    ));
+                  })()}
                 </select>
+                {(() => {
+                  const device = devices.find(d => d.id === selectedDevice);
+                  const deviceType = device?.model?.deviceType;
+                  if (deviceType && !selectedTemplate) {
+                    return (
+                      <p className="text-xs text-gray-500 mt-1">
+                        💡 {deviceType === 'ANALOG' ? 'Аналог' : 'Дижитал'} төхөөрөмжид зориулсан template автоматаар сонгогдоно
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               {/* Scheduled At */}

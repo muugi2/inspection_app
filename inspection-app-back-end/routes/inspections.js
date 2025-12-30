@@ -200,7 +200,7 @@ async function getAssignedInspectionsByType(userId, inspectionType = null) {
           id: true,
           serialNumber: true,
           assetTag: true,
-          model: { select: { manufacturer: true, model: true } },
+          model: { select: { manufacturer: true, model: true, deviceType: true } },
         },
       },
       site: { select: { id: true, name: true } },
@@ -208,7 +208,7 @@ async function getAssignedInspectionsByType(userId, inspectionType = null) {
         select: { id: true, contractName: true, contractNumber: true },
       },
       createdByUser: { select: { id: true, fullName: true, email: true } },
-      template: { select: { id: true, name: true, type: true } },
+      template: { select: { id: true, name: true, type: true, deviceType: true } },
     },
     orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'desc' }],
   });
@@ -355,6 +355,7 @@ async function getTemplateAndSections(inspection) {
         id: true,
         name: true,
         type: true,
+        deviceType: true,
         description: true,
         questions: true,
         isActive: true,
@@ -415,6 +416,7 @@ router.get('/', authMiddleware, async (req, res) => {
               select: {
                 manufacturer: true,
                 model: true,
+                deviceType: true,
               },
             },
           },
@@ -437,6 +439,7 @@ router.get('/', authMiddleware, async (req, res) => {
             id: true,
             name: true,
             type: true,
+            deviceType: true,
           },
         },
         assignee: {
@@ -772,7 +775,7 @@ router.get('/:id/template', authMiddleware, async (req, res) => {
           assetTag: true,
           metadata: true,
           model: {
-            select: { id: true, manufacturer: true, model: true, specs: true },
+            select: { id: true, manufacturer: true, model: true, deviceType: true, specs: true },
           },
           organization: { select: { id: true, name: true, code: true } },
           site: { select: { id: true, name: true } },
@@ -4179,13 +4182,21 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
-    // Verify device exists and get related data
+    // Verify device exists and get related data including model's device_type
     const device = await prisma.Device.findUnique({
       where: { id: BigInt(deviceId) },
       include: {
         organization: true,
         site: true,
         contract: true,
+        model: {
+          select: {
+            id: true,
+            manufacturer: true,
+            model: true,
+            deviceType: true,
+          },
+        },
       },
     });
 
@@ -4201,10 +4212,37 @@ router.post('/', authMiddleware, async (req, res) => {
     const finalSiteId = siteId || device.siteId?.toString();
     const finalContractId = contractId || device.contractId?.toString();
 
-    // Verify template if provided
-    if (templateId) {
+    // Get device type from device model
+    const deviceType = device.model?.deviceType;
+
+    // If templateId not provided, auto-select template based on device type
+    let finalTemplateId = templateId;
+    if (!finalTemplateId && deviceType) {
+      // Find template matching device type and inspection type
+      const normalizedType = type.toUpperCase();
+      const autoTemplate = await prisma.InspectionTemplate.findFirst({
+        where: {
+          type: normalizedType,
+          deviceType: deviceType,
+          isActive: true,
+        },
+        orderBy: {
+          createdAt: 'desc', // Get the latest template
+        },
+      });
+
+      if (autoTemplate) {
+        finalTemplateId = autoTemplate.id.toString();
+        console.log(`[POST /api/inspections] Auto-selected template ${finalTemplateId} for device type ${deviceType}`);
+      } else {
+        console.warn(`[POST /api/inspections] No template found for device type ${deviceType} and inspection type ${normalizedType}`);
+      }
+    }
+
+    // Verify template if provided or auto-selected
+    if (finalTemplateId) {
       const template = await prisma.InspectionTemplate.findUnique({
-        where: { id: BigInt(templateId) },
+        where: { id: BigInt(finalTemplateId) },
       });
 
       if (!template) {
@@ -4250,7 +4288,7 @@ router.post('/', authMiddleware, async (req, res) => {
         deviceId: BigInt(deviceId),
         siteId: finalSiteId ? BigInt(finalSiteId) : null,
         contractId: finalContractId ? BigInt(finalContractId) : null,
-        templateId: templateId ? BigInt(templateId) : null,
+        templateId: finalTemplateId ? BigInt(finalTemplateId) : null,
         type: normalizedType,
         scheduleType: normalizedScheduleType,
         title: title,
@@ -4266,6 +4304,14 @@ router.post('/', authMiddleware, async (req, res) => {
             id: true,
             serialNumber: true,
             assetTag: true,
+            model: {
+              select: {
+                id: true,
+                manufacturer: true,
+                model: true,
+                deviceType: true,
+              },
+            },
           },
         },
         site: {
@@ -4279,6 +4325,7 @@ router.post('/', authMiddleware, async (req, res) => {
             id: true,
             name: true,
             type: true,
+            deviceType: true,
           },
         },
       },
@@ -4305,6 +4352,12 @@ router.post('/', authMiddleware, async (req, res) => {
               id: inspection.device.id.toString(),
               serialNumber: inspection.device.serialNumber,
               assetTag: inspection.device.assetTag,
+              model: inspection.device.model ? {
+                id: inspection.device.model.id.toString(),
+                manufacturer: inspection.device.model.manufacturer,
+                model: inspection.device.model.model,
+                deviceType: inspection.device.model.deviceType,
+              } : null,
             }
           : null,
         site: inspection.site
@@ -4318,6 +4371,7 @@ router.post('/', authMiddleware, async (req, res) => {
               id: inspection.template.id.toString(),
               name: inspection.template.name,
               type: inspection.template.type,
+              deviceType: inspection.template.deviceType,
             }
           : null,
         createdAt: inspection.createdAt,
@@ -4484,39 +4538,98 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     console.log(`✅ Inspection found: ${inspection.title} (ID=${id})`);
 
     // Hard delete - permanently remove from database
-    // First, delete related inspection_question_images (raw SQL table)
+    // Delete in the correct order to avoid foreign key constraint violations
+    
+    // Step 1: Delete related RepairImages (they have foreign key to Repair)
+    console.log(`🗑️ Step 1: Deleting repair images for inspection ${id}...`);
     try {
-      // Check if inspection_question_images table exists
-      const tableCheck = await prisma.$queryRaw`
-        SELECT COUNT(*) as count
-        FROM information_schema.tables
-        WHERE table_schema = DATABASE()
-        AND table_name = 'inspection_question_images'
-      `;
+      const repairImages = await prisma.RepairImage.findMany({
+        where: {
+          repair: {
+            inspectionId: BigInt(id),
+          },
+        },
+        select: { id: true },
+      });
       
-      const tableExists = tableCheck?.[0]?.count > 0;
-      
-      if (tableExists) {
-        console.log(`🗑️ Deleting related images from inspection_question_images for inspection ${id}...`);
+      if (repairImages.length > 0) {
+        const repairImageIds = repairImages.map(img => img.id);
+        await prisma.RepairImage.deleteMany({
+          where: {
+            id: { in: repairImageIds },
+          },
+        });
+        console.log(`✅ Deleted ${repairImages.length} repair image(s)`);
+      } else {
+        console.log(`ℹ️  No repair images found for inspection ${id}`);
+      }
+    } catch (repairImageError) {
+      console.error('⚠️ Error deleting repair images (non-critical):', repairImageError.message);
+    }
+
+    // Step 2: Delete related Repairs
+    console.log(`🗑️ Step 2: Deleting repairs for inspection ${id}...`);
+    try {
+      const deleteRepairsResult = await prisma.Repair.deleteMany({
+        where: {
+          inspectionId: BigInt(id),
+        },
+      });
+      console.log(`✅ Deleted ${deleteRepairsResult.count} repair(s) for inspection ${id}`);
+    } catch (repairError) {
+      console.error('⚠️ Error deleting repairs (non-critical):', repairError.message);
+      // Continue even if repair deletion fails - might not exist
+    }
+
+    // Step 3: Delete related inspection_question_images (using answer_id, not inspection_id)
+    console.log(`🗑️ Step 3: Deleting inspection question images for inspection ${id}...`);
+    try {
+      // First, get all answer_ids for this inspection
+      const answers = await prisma.InspectionAnswer.findMany({
+        where: { inspectionId: BigInt(id) },
+        select: { id: true },
+      });
+
+      if (answers.length > 0) {
+        const answerIds = answers.map(a => a.id);
         
-        // Delete images using inspection_id directly
-        const deleteResult = await prisma.$executeRaw`
-          DELETE FROM inspection_question_images
-          WHERE inspection_id = ${BigInt(id)}
+        // Check if inspection_question_images table exists
+        const tableCheck = await prisma.$queryRaw`
+          SELECT COUNT(*) as count
+          FROM information_schema.tables
+          WHERE table_schema = DATABASE()
+          AND table_name = 'inspection_question_images'
         `;
         
-        console.log(`✅ Deleted images from inspection_question_images for inspection ${id} (affected rows: ${deleteResult})`);
+        const tableExists = tableCheck?.[0]?.count > 0;
+        
+        if (tableExists) {
+          // Delete images using answer_id (correct column name)
+          // Delete for each answer_id to avoid SQL injection and handle BigInt correctly
+          let totalDeleted = 0;
+          for (const answerId of answerIds) {
+            const deleteResult = await prisma.$executeRaw`
+              DELETE FROM inspection_question_images
+              WHERE answer_id = ${answerId}
+            `;
+            totalDeleted += deleteResult;
+          }
+          
+          console.log(`✅ Deleted images from inspection_question_images for inspection ${id} (affected rows: ${totalDeleted})`);
+        } else {
+          console.log(`⚠️ inspection_question_images table does not exist, skipping image deletion`);
+        }
       } else {
-        console.log(`⚠️ inspection_question_images table does not exist, skipping image deletion`);
+        console.log(`ℹ️  No inspection answers found for inspection ${id}, skipping image deletion`);
       }
     } catch (imageError) {
       console.error('⚠️ Error deleting inspection_question_images (non-critical):', imageError.message);
       // Continue with inspection deletion even if image deletion fails
     }
 
-    // Hard delete the inspection
+    // Step 4: Hard delete the inspection
     // This will cascade delete InspectionAnswer, InspectionQuestionAnswer, and Attachment records
-    console.log(`🗑️ Attempting to hard delete inspection: ${inspection.title} (ID=${id})`);
+    console.log(`🗑️ Step 4: Attempting to hard delete inspection: ${inspection.title} (ID=${id})`);
     const deletedInspection = await prisma.Inspection.delete({
       where: { id: BigInt(id) },
     });

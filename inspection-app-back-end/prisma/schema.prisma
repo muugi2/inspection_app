@@ -107,18 +107,20 @@ model Site {
 }
 
 model DeviceModel {
-  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  manufacturer String   @db.VarChar(200)
-  model        String   @db.VarChar(200)
+  id           BigInt      @id @default(autoincrement()) @db.UnsignedBigInt
+  manufacturer String      @db.VarChar(200)
+  model        String      @db.VarChar(200)
+  deviceType   DeviceType? @map("device_type")
   specs        Json?
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @default(now()) @updatedAt @map("updated_at")
 
   // Relations
   devices Device[]
 
   @@unique([manufacturer, model], map: "uk_device_models")
   @@index([manufacturer], map: "idx_device_models_manu")
+  @@index([deviceType], map: "idx_device_models_type")
   @@map("device_models")
 }
 
@@ -287,6 +289,7 @@ model InspectionTemplate {
   id          BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   name        String         @db.VarChar(255)
   type        InspectionType
+  deviceType  DeviceType?    @map("device_type")
   description String?        @db.Text
   questions   Json // Standardized questions
   isActive    Boolean        @default(true) @map("is_active")
@@ -298,6 +301,7 @@ model InspectionTemplate {
   schedules   InspectionSchedule[]
 
   @@index([type], map: "idx_inspection_templates_type")
+  @@index([deviceType], map: "idx_inspection_templates_device_type")
   @@index([isActive], map: "idx_inspection_templates_active")
   @@map("inspection_templates")
 }
@@ -369,6 +373,11 @@ model AuditLog {
 }
 
 // Enums
+enum DeviceType {
+  ANALOG
+  DIGITAL
+}
+
 enum DeviceStatus {
   IN_STOCK
   INSTALLED

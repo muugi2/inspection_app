@@ -233,9 +233,15 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
 
     if (item.deviceInfo != null) {
       String? deviceModel;
+      String? deviceType;
       if (item.deviceInfo!['model'] is Map<String, dynamic>) {
         final modelInfo = item.deviceInfo!['model'] as Map<String, dynamic>;
         deviceModel = modelInfo['model']?.toString();
+        // Device type-ийг авна (ANALOG эсвэл DIGITAL)
+        final type = modelInfo['deviceType']?.toString();
+        if (type != null && type.isNotEmpty) {
+          deviceType = type == 'ANALOG' ? 'Аналог' : type == 'DIGITAL' ? 'Дижитал' : type;
+        }
       }
 
       final metadata = item.deviceInfo!['metadata'];
@@ -256,6 +262,10 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
 
       if (deviceModel != null && deviceModel.isNotEmpty) {
         parts.add(deviceModel);
+      }
+
+      if (deviceType != null && deviceType.isNotEmpty) {
+        parts.add(deviceType);
       }
 
       if (location != null && location.isNotEmpty) {

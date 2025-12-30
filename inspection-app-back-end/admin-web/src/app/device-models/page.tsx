@@ -12,6 +12,7 @@ interface DeviceModel {
   id: string;
   manufacturer: string;
   model: string;
+  deviceType?: string;
   specs?: any;
   createdAt: string;
 }
@@ -25,6 +26,7 @@ export default function DeviceModelsPage() {
   const [formData, setFormData] = useState({
     manufacturer: '',
     model: '',
+    deviceType: '',
     maxWeight: '',
     minWeight: '',
     precision: '',
@@ -68,6 +70,7 @@ export default function DeviceModelsPage() {
     setFormData({
       manufacturer: '',
       model: '',
+      deviceType: '',
       maxWeight: '',
       minWeight: '',
       precision: '',
@@ -95,6 +98,7 @@ export default function DeviceModelsPage() {
     setFormData({
       manufacturer: model.manufacturer,
       model: model.model,
+      deviceType: (model as any).deviceType || '',
       maxWeight: model.specs?.max_weight || '',
       minWeight: model.specs?.min_weight || '',
       precision: model.specs?.precision || '',
@@ -136,8 +140,8 @@ export default function DeviceModelsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.manufacturer || !formData.model) {
-      alert('Үйлдвэрлэгч болон загвар шаардлагатай');
+    if (!formData.manufacturer || !formData.model || !formData.deviceType) {
+      alert('Үйлдвэрлэгч, загвар болон төхөөрөмжийн төрөл шаардлагатай');
       return;
     }
 
@@ -161,6 +165,7 @@ export default function DeviceModelsPage() {
         await apiService.deviceModels.update(editingModel.id, {
           manufacturer: formData.manufacturer,
           model: formData.model,
+          deviceType: formData.deviceType,
           specs,
         });
         alert('✓ Загварыг амжилттай шинэчлэлээ!');
@@ -168,6 +173,7 @@ export default function DeviceModelsPage() {
         await apiService.deviceModels.create({
           manufacturer: formData.manufacturer,
           model: formData.model,
+          deviceType: formData.deviceType,
           specs,
         });
         alert('✓ Загварыг амжилттай үүсгэлээ!');
@@ -249,8 +255,16 @@ export default function DeviceModelsPage() {
                     </span>
                   </div>
                   
-                  {model.specs && (
+                  {(model.deviceType || model.specs) && (
                     <div className="border-t border-gray-200 pt-4 mt-4 space-y-2">
+                      {model.deviceType && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Төхөөрөмжийн төрөл:</span>
+                          <span className="font-medium">
+                            {model.deviceType === 'ANALOG' ? 'Аналог' : model.deviceType === 'DIGITAL' ? 'Дижитал' : model.deviceType}
+                          </span>
+                        </div>
+                      )}
                       {model.specs.max_weight && (
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-500">Хамгийн их жин:</span>
@@ -345,6 +359,22 @@ export default function DeviceModelsPage() {
                       required
                     />
                   </div>
+                </div>
+                
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Төхөөрөмжийн төрөл *
+                  </label>
+                  <select
+                    value={formData.deviceType}
+                    onChange={(e) => setFormData({ ...formData, deviceType: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  >
+                    <option value="">Сонгоно уу</option>
+                    <option value="ANALOG">Аналог</option>
+                    <option value="DIGITAL">Дижитал</option>
+                  </select>
                 </div>
                 
                 <div className="border-t border-gray-200 pt-4 mb-4">

@@ -298,6 +298,7 @@ export const apiService = {
     create: async (data: {
       manufacturer: string;
       model: string;
+      deviceType: string;
       specs?: any;
     }) => {
       const response = await apiClient.post(API_ENDPOINTS.DEVICE_MODELS.CREATE, data);
@@ -307,6 +308,7 @@ export const apiService = {
     update: async (id: string, data: {
       manufacturer?: string;
       model?: string;
+      deviceType?: string;
       specs?: any;
     }) => {
       const url = API_ENDPOINTS.DEVICE_MODELS.UPDATE.replace(':id', id);
