@@ -1,5 +1,16 @@
 FROM node:18-alpine
 
+# Install dependencies for puppeteer (Chromium and required libraries)
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    && rm -rf /var/cache/apk/*
+
 # Set working directory
 WORKDIR /usr/src/app
 
@@ -8,6 +19,13 @@ COPY package*.json ./
 
 # Install dependencies (including dev dependencies for nodemon)
 RUN npm ci
+
+# Set Puppeteer to use installed Chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# Copy templates folder (including repair_template.docx for repair reports)
+COPY templates/ ./templates/
 
 # Copy application code
 COPY . .

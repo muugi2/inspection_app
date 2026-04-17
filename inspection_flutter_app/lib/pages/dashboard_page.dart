@@ -5,7 +5,7 @@ import 'package:app/widgets/app_curved_navbar.dart';
 import 'package:app/pages/inspection_page.dart';
 import 'package:app/pages/repair_page.dart';
 import 'package:app/pages/plan_page.dart';
-import 'package:app/pages/verify_page.dart';
+import 'package:app/pages/verify_selection_page.dart';
 import 'package:app/pages/install_page.dart';
 import 'package:app/pages/auth/login_page.dart';
 
@@ -23,7 +23,7 @@ class _DashboardPageState extends State<DashboardPage> {
     InspectionPage(),
     RepairPage(),
     PlanPage(),
-    VerifyPage(),
+    VerifySelectionPage(),
     InstallPage(),
   ];
 
@@ -39,12 +39,29 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  String _getAppBarTitle() {
+    switch (_index) {
+      case 0:
+        return 'Үзлэг';
+      case 1:
+        return 'Засвар';
+      case 2:
+        return 'Төлөвлөгөө';
+      case 3:
+        return 'Баталгаажуулалт';
+      case 4:
+        return 'Суурьлуулалт';
+      default:
+        return 'Dashboard';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBody: true,
       appBar: AppBar(
-        title: const Text('Dashboard'),
+        title: Text(_getAppBarTitle()),
         actions: [
           IconButton(
             onPressed: _logout,

@@ -33,15 +33,38 @@ interface PreviewResponse {
         location: string;
         scale_id_serial_no: string;
         model: string;
+        platformLength?: string | number;
+        platformWidth?: string | number;
+        platformCount?: string | number;
       };
-      exterior: Record<string, FieldValue>;
-      indicator: Record<string, FieldValue>;
-      jbox: Record<string, FieldValue>;
-      sensor: Record<string, FieldValue>;
-      foundation: Record<string, FieldValue>;
-      cleanliness: Record<string, FieldValue>;
-      remarks: string;
-      signatures: {
+      repair?: {
+        section: string;
+        field: string;
+        section_field: string; // Section - Field нэрийг нэгтгэсэн
+        before_text: string;
+        after_text: string;
+        before_image?: any;
+        after_image?: any;
+        beforeImagePreview?: {
+          base64: string;
+          mimeType: string;
+          imageUrl: string;
+        };
+        afterImagePreview?: {
+          base64: string;
+          mimeType: string;
+          imageUrl: string;
+        };
+      };
+      repairRows?: Array<any>; // Deprecated: use repair instead
+      exterior?: Record<string, FieldValue>;
+      indicator?: Record<string, FieldValue>;
+      jbox?: Record<string, FieldValue>;
+      sensor?: Record<string, FieldValue>;
+      foundation?: Record<string, FieldValue>;
+      cleanliness?: Record<string, FieldValue>;
+      remarks?: string;
+      signatures?: {
         inspector?:
           | {
               data: string;
@@ -69,8 +92,18 @@ interface RowDefinition {
   path: string;
 }
 
+// Template-defined fields for each section (based on MySQL template structure)
+const templateFields: Record<string, string[]> = {
+  exterior: ['platform_plate', 'beam_joint_plate', 'stop_bolt', 'interplatform_bolts', 'base'],
+  indicator: ['led_display', 'power_plug', 'seal_bolt', 'buttons', 'junction_wiring', 'serial_converter', 'control_screen'],
+  jbox: ['box_integrity', 'collector_board', 'wire_tightener', 'protective_box', 'resistance_element'], // resistance_element for digital
+  sensor: ['signal_wire', 'ball', 'ball_cup_thin', 'plate'],
+  foundation: ['cross_base', 'anchor_plate', 'ramp_angle', 'ramp_stopper', 'ramp', 'slab_base'],
+  cleanliness: ['under_platform', 'top_platform', 'gap_platform_ramp', 'both_sides_area'],
+};
+
 // Dynamic function to generate rows from backend data
-// Shows all fields from backend, with labels from fieldLabelMap if available
+// Shows only template-defined fields from backend data, with labels from fieldLabelMap if available
 function generateRowsFromData(
   sectionData: Record<string, FieldValue>,
   sectionName: string,
@@ -78,16 +111,49 @@ function generateRowsFromData(
 ): RowDefinition[] {
   if (!sectionData) return [];
   
-  // Include all fields from backend data
+  // Get template-defined fields for this section
+  const allowedFields = templateFields[sectionName] || [];
+  
+  // Include only template-defined fields from backend data
   // Use label from fieldLabelMap if available, otherwise use the field key as label
   return Object.keys(sectionData)
     .filter(key => {
       // Filter out null/undefined values and metadata fields
       const value = sectionData[key];
       const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+      
+      // Filter out battery field from indicator section
+      if (sectionName === 'indicator' && key === 'battery') {
+        return false;
+      }
+      
+      // Filter out serial_converter_plug (only show serial_converter from template)
+      if (sectionName === 'indicator' && key === 'serial_converter_plug') {
+        return false;
+      }
+      
+      // Filter out resistor_element (only show resistance_element from template)
+      if (sectionName === 'jbox' && key === 'resistor_element') {
+        return false;
+      }
+      
+      // Filter out base from sensor section (not in template)
+      if (sectionName === 'sensor' && key === 'base') {
+        return false;
+      }
+      
+      // Filter out sensor_base from foundation section (not in template)
+      if (sectionName === 'foundation' && key === 'sensor_base') {
+        return false;
+      }
+      
+      // Only include fields that are in the template definition
+      const isTemplateField = allowedFields.includes(key);
+      
       return value !== null && 
              value !== undefined && 
-             !excludedKeys.includes(key);
+             !excludedKeys.includes(key) &&
+             isTemplateField;
     })
     .map(key => ({
       label: fieldLabelMap[key] || key, // Use label from map, or fallback to key
@@ -102,6 +168,7 @@ const fieldLabels: Record<string, Record<string, string>> = {
     beam_joint_plate: 'Дам нуруу холбосон лист',
     stop_bolt: 'Хязгаарлагчийн боолт',
     interplatform_bolts: 'Тавцан хоорондын боолт',
+    base: 'Мэдрэгчийн суурь', // Added base field mapping for exterior section
   },
   indicator: {
     led_display: 'Лед дэлгэц',
@@ -109,36 +176,34 @@ const fieldLabels: Record<string, Record<string, string>> = {
     seal_bolt: 'Лац болон лацны боолт',
     buttons: 'Товчлуур',
     junction_wiring: 'Холбогч хайрцаг болон сигналын утас',
-    serial_converter_plug: 'Сериал хөрвүүлэгч залгуур', // Backend maps 'serial_converter' to 'serial_converter_plug'
-    battery: 'Батарей',
+    serial_converter: 'Сериал хөрвүүлэгч залгуур', 
+    control_screen: 'Хяналтын дэлгэц', 
   },
   jbox: {
     box_integrity: 'Хайрцагны бүрэн бүтэн байдал',
     collector_board: 'Сигналын утас цуглуулагч хавтан',
     wire_tightener: 'Сигналын утас чангалагч',
-    resistor_element: 'Эсэргүүцлийн элемент',
+    resistance_element: 'Эсэргүүцлийн элемент', // Backend uses 'resistance_element'
     protective_box: 'Холбогч хайрцагны хамгаалалтын гадна хайрцаг',
   },
   sensor: {
     signal_wire: 'Сигналын утас',
-    ball: 'Шаариг',
-    base: 'Мэдрэгчийн суурь',
-    ball_cup_thin: 'Шааригны аяган суурь /нимгэн/',
+    ball: 'Ган бөмбөлөг',
+    ball_cup_thin: 'Ган бөмбөлгийн аяган суурь /нимгэн/',
     plate: 'Ялтсан хавтан',
   },
   foundation: {
     cross_base: 'Хөндлөн суурь',
     anchor_plate: 'Суурийн анкер лист',
-    ramp_angle: 'Пандусын угольник',
-    ramp_stopper: 'Пандусын өшиглүүр',
-    ramp: 'Пандус',
+    ramp_angle: 'Налуу замын угольник',
+    ramp_stopper: 'Налуу замын өшиглүүр',
+    ramp: 'Налуу зам',
     slab_base: 'Нил суурь',
-    sensor_base: 'Мэдрэгчийн суурь',
   },
   cleanliness: {
     under_platform: 'Тавцангийн доод тал',
     top_platform: 'Тавцангийн дээд тал',
-    gap_platform_ramp: 'Автожингийн тавцан болон Пандус хоорондын завсар',
+    gap_platform_ramp: 'Автожингийн тавцан болон Налуу зам хоорондын завсар',
     both_sides_area: 'Автожингийн 2 талын талбай',
   },
 };
@@ -161,10 +226,10 @@ const indicatorRows: RowDefinition[] = [
     path: 'indicator.junction_wiring',
   },
   {
-    label: 'Сериал хөрвүүлэгч залгуур',
+    label: 'Тооцоолуур',
     path: 'indicator.serial_converter_plug',
   },
-  { label: 'Батарей', path: 'indicator.battery' },
+  // battery removed as requested
 ];
 
 const jboxRows: RowDefinition[] = [
@@ -177,7 +242,7 @@ const jboxRows: RowDefinition[] = [
     path: 'jbox.collector_board',
   },
   { label: 'Сигналын утас чангалагч', path: 'jbox.wire_tightener' },
-  { label: 'Эсэргүүцлийн элемент', path: 'jbox.resistor_element' },
+  { label: 'Эсэргүүцлийн элемент', path: 'jbox.resistance_element' },
   {
     label: 'Холбогч хайрцагны хамгаалалтын хайрцаг',
     path: 'jbox.protective_box',
@@ -186,18 +251,18 @@ const jboxRows: RowDefinition[] = [
 
 const sensorRows: RowDefinition[] = [
   { label: 'Сигналын утас', path: 'sensor.signal_wire' },
-  { label: 'Шаариг', path: 'sensor.ball' },
+  { label: 'Ган бөмбөлөг', path: 'sensor.ball' },
   { label: 'Мэдрэгчийн суурь', path: 'sensor.base' },
-  { label: 'Шааригны аяган суурь /нимгэн/', path: 'sensor.ball_cup_thin' },
+  { label: 'Ган бөмбөлгийн аяган суурь /нимгэн/', path: 'sensor.ball_cup_thin' },
   { label: 'Ялтсан хавтан', path: 'sensor.plate' },
 ];
 
 const foundationRows: RowDefinition[] = [
   { label: 'Хөндлөн суурь', path: 'foundation.cross_base' },
   { label: 'Суурийн анкер лист', path: 'foundation.anchor_plate' },
-  { label: 'Пандусын угольник', path: 'foundation.ramp_angle' },
-  { label: 'Пандусын өшиглүүр', path: 'foundation.ramp_stopper' },
-  { label: 'Пандус', path: 'foundation.ramp' },
+  { label: 'Налуу замын угольник', path: 'foundation.ramp_angle' },
+  { label: 'Налуу замын өшиглүүр', path: 'foundation.ramp_stopper' },
+  { label: 'Налуу зам', path: 'foundation.ramp' },
   { label: 'Нил суурь', path: 'foundation.slab_base' },
   { label: 'Мэдрэгчийн суурь', path: 'foundation.sensor_base' },
 ];
@@ -206,7 +271,7 @@ const cleanlinessRows: RowDefinition[] = [
   { label: 'Тавцангийн доод тал', path: 'cleanliness.under_platform' },
   { label: 'Тавцангийн дээд тал', path: 'cleanliness.top_platform' },
   {
-    label: 'Тавцан болон Пандус хоорондын завсар',
+    label: 'Тавцан болон Налуу зам хоорондын завсар',
     path: 'cleanliness.gap_platform_ramp',
   },
   { label: 'Автожингийн 2 талын талбай', path: 'cleanliness.both_sides_area' },
@@ -287,12 +352,26 @@ function TableSection({
   data,
   sectionName,
   onImageClick,
+  answerId,
+  editingComment,
+  editComment,
+  onEditComment,
+  onSaveComment,
+  onCancelComment,
+  isSaving,
 }: {
   title: string;
   rows: RowDefinition[];
   data: PreviewResponse['data']['d'];
   sectionName: string;
   onImageClick?: (src: string, alt: string) => void;
+  answerId?: string;
+  editingComment: { section: string; fieldId: string } | null;
+  editComment: string;
+  onEditComment: (section: string, fieldId: string, currentComment: string) => void;
+  onSaveComment: (section: string, fieldId: string) => void;
+  onCancelComment: () => void;
+  isSaving: boolean;
 }) {
   // Field ID mapping - maps display field ID to backend field ID
   // Backend uses 'serial_converter' but frontend displays as 'serial_converter_plug'
@@ -301,17 +380,21 @@ function TableSection({
     'exterior.beam_joint_plate': 'beam_joint_plate',
     'exterior.stop_bolt': 'stop_bolt',
     'exterior.interplatform_bolts': 'interplatform_bolts',
+    'exterior.base': 'base', // Added base field mapping for exterior section
     'indicator.led_display': 'led_display',
     'indicator.power_plug': 'power_plug',
     'indicator.seal_bolt': 'seal_bolt',
     'indicator.buttons': 'buttons',
     'indicator.junction_wiring': 'junction_wiring',
-    'indicator.serial_converter_plug': 'serial_converter', // Backend field ID
-    'indicator.battery': 'battery',
+    'indicator.serial_converter': 'serial_converter', // Backend field ID
+
+    'indicator.control_screen': 'control_screen', // Added control_screen field mapping
+    // 'indicator.battery': 'battery', // Removed as requested
     'jbox.box_integrity': 'box_integrity',
     'jbox.collector_board': 'collector_board',
     'jbox.wire_tightener': 'wire_tightener',
     'jbox.resistor_element': 'resistor_element',
+    'jbox.resistance_element': 'resistance_element', // Backend uses 'resistance_element'
     'jbox.protective_box': 'protective_box',
     'sensor.signal_wire': 'signal_wire',
     'sensor.ball': 'ball',
@@ -362,6 +445,10 @@ function TableSection({
         <tbody>
           {rows.map((row, index) => {
             const field = getField(data, row.path);
+            const fieldKey = row.path.split('.').pop() || '';
+            const backendFieldId = getFieldIdForImages(sectionName, fieldKey);
+            const isEditing = answerId && editingComment?.section === sectionName && editingComment?.fieldId === backendFieldId;
+            
             return (
               <tr key={row.path} className="align-top">
                 <td className="border border-gray-300 px-2 py-2 text-center font-medium">
@@ -379,8 +466,46 @@ function TableSection({
                     {field.status || '—'}
                   </span>
                 </td>
-                <td className="border border-gray-300 px-3 py-2 whitespace-pre-line">
-                  {field.comment || '—'}
+                <td className="border border-gray-300 px-3 py-2">
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editComment}
+                        onChange={(e) => onEditComment(sectionName, backendFieldId, e.target.value)}
+                        className="w-full min-h-[60px] text-sm border border-gray-300 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                        disabled={isSaving}
+                        placeholder="Тайлбар оруулах..."
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => onSaveComment(sectionName, backendFieldId)}
+                          disabled={isSaving}
+                          className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700 disabled:bg-gray-400"
+                        >
+                          {isSaving ? '...' : '✓'}
+                        </button>
+                        <button
+                          onClick={onCancelComment}
+                          disabled={isSaving}
+                          className="px-3 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400 disabled:bg-gray-200"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div 
+                      className={`whitespace-pre-line ${answerId ? 'group cursor-pointer relative' : ''}`}
+                      onClick={() => answerId && onEditComment(sectionName, backendFieldId, field.comment || '')}
+                    >
+                      {field.comment || '—'}
+                      {answerId && (
+                        <span className="absolute top-1 right-1 text-xs text-gray-400 opacity-0 group-hover:opacity-100">
+                          ✏️
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </td>
               </tr>
             );
@@ -446,27 +571,73 @@ function TableSection({
 }
 
 interface A4PreviewProps {
-  answerId: string;
+  answerId?: string;
+  repairInspectionId?: string;
+  repairId?: string; // Зөвхөн тухайн засварыг харуулах
 }
 
-export default function A4Preview({ answerId }: A4PreviewProps) {
+export default function A4Preview({ answerId, repairInspectionId, repairId }: A4PreviewProps) {
   const [preview, setPreview] = useState<PreviewResponse['data'] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [enlargedImage, setEnlargedImage] = useState<{ src: string; alt: string } | null>(null);
+  
+  // Inline editing states (only for inspection answers, not repair reports)
+  const [isEditingDate, setIsEditingDate] = useState(false);
+  const [isEditingRemarks, setIsEditingRemarks] = useState(false);
+  const [editDate, setEditDate] = useState('');
+  const [editRemarks, setEditRemarks] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Comment editing state: { section: string, fieldId: string } | null
+  const [editingComment, setEditingComment] = useState<{ section: string; fieldId: string } | null>(null);
+  const [editComment, setEditComment] = useState('');
+  
+  // Repair after_text editing state
+  const [editingRepairAfterText, setEditingRepairAfterText] = useState(false);
+  const [editRepairAfterText, setEditRepairAfterText] = useState('');
+  
+  // Ensure repairId is string
+  const repairIdString = repairId ? String(repairId) : null;
+  
+  // Debug: Log repairId to verify it's being passed correctly
+  useEffect(() => {
+    if (repairInspectionId) {
+      console.log('[A4Preview] Repair props:', { repairInspectionId, repairId, repairIdString });
+    }
+  }, [repairInspectionId, repairId, repairIdString]);
 
   useEffect(() => {
     const fetchPreview = async () => {
-      if (!answerId) return;
+      if (!answerId && !repairInspectionId) return;
       try {
         setIsLoading(true);
         setError(null);
-        const response: PreviewResponse = await apiService.reports.getAnswerPreview(
-          answerId
-        );
+        
+        let response: PreviewResponse;
+        if (repairInspectionId) {
+          // Fetch repair report preview
+          // repairId байвал зөвхөн тухайн засварыг шүүх
+          response = await apiService.reports.getRepairPreview(repairInspectionId, repairId);
+        } else if (answerId) {
+          // Fetch inspection answer preview
+          response = await apiService.reports.getAnswerPreview(answerId);
+        } else {
+          throw new Error('No ID provided');
+        }
+        
         setPreview(response.data);
+        
+        // Initialize edit values from preview data
+        if (response.data?.d) {
+          setEditDate(response.data.d.metadata?.date || '');
+          setEditRemarks(response.data.d.remarks || '');
+          // Initialize repair after_text if repair exists
+          if (response.data.d.repair) {
+            setEditRepairAfterText(response.data.d.repair.after_text || '');
+          }
+        }
       } catch (err: any) {
-        console.error('Failed to load report preview:', err);
         setError(
           err?.response?.data?.message ||
             'Тайлангийн мэдээлэл ачаалахад алдаа гарлаа.'
@@ -477,7 +648,116 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
     };
 
     fetchPreview();
-  }, [answerId]);
+  }, [answerId, repairInspectionId, repairId]);
+
+  const handleSaveDate = async () => {
+    if (!answerId) return;
+    
+    try {
+      setIsSaving(true);
+      await apiService.inspectionAnswers.update(answerId, {
+        date: editDate,
+      });
+      
+      // Reload preview to get updated data
+      const response = await apiService.reports.getAnswerPreview(answerId);
+      setPreview(response.data);
+      setEditDate(response.data.d?.metadata?.date || '');
+      
+      setIsEditingDate(false);
+    } catch (err: any) {
+      console.error('Failed to update date:', err);
+      alert('Огноо хадгалахад алдаа гарлаа');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveRemarks = async () => {
+    if (!answerId) return;
+    
+    try {
+      setIsSaving(true);
+      await apiService.inspectionAnswers.update(answerId, {
+        remarks: editRemarks,
+      });
+      
+      // Reload preview to get updated data
+      const response = await apiService.reports.getAnswerPreview(answerId);
+      setPreview(response.data);
+      setEditRemarks(response.data.d?.remarks || '');
+      
+      setIsEditingRemarks(false);
+    } catch (err: any) {
+      console.error('Failed to update remarks:', err);
+      alert('Санал тэмдэглэл хадгалахад алдаа гарлаа');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveComment = async (section: string, fieldId: string) => {
+    if (!answerId) return;
+    
+    try {
+      setIsSaving(true);
+      await apiService.inspectionAnswers.update(answerId, {
+        section,
+        fieldId,
+        comment: editComment,
+      });
+      
+      // Reload preview to get updated data
+      const response = await apiService.reports.getAnswerPreview(answerId);
+      setPreview(response.data);
+      
+      setEditingComment(null);
+      setEditComment('');
+    } catch (err: any) {
+      console.error('Failed to update comment:', err);
+      alert('Тайлбар хадгалахад алдаа гарлаа');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancelComment = () => {
+    setEditingComment(null);
+    setEditComment('');
+  };
+
+  const handleSaveRepairAfterText = async () => {
+    if (!repairIdString) return;
+    
+    try {
+      setIsSaving(true);
+      await apiService.repairs.update(repairIdString, {
+        repairDescription: editRepairAfterText,
+      });
+      
+      // Reload preview to get updated data
+      if (repairInspectionId) {
+        const response = await apiService.reports.getRepairPreview(repairInspectionId, repairIdString);
+        setPreview(response.data);
+        setEditRepairAfterText(response.data.d?.repair?.after_text || '');
+      }
+      
+      setEditingRepairAfterText(false);
+    } catch (err: any) {
+      console.error('Failed to update repair after_text:', err);
+      alert('Дараах байдлын тайлбар хадгалахад алдаа гарлаа');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancelRepairAfterText = () => {
+    setEditingRepairAfterText(false);
+    // Reset to original value
+    if (preview?.d?.repair) {
+      setEditRepairAfterText(preview.d.repair.after_text || '');
+    }
+  };
 
   const signatureSrc = useMemo(
     () => toSignatureSrc(preview?.d.signatures?.inspector || null),
@@ -534,7 +814,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
       <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
         <h3 className="text-lg font-medium text-gray-900">A4 Preview</h3>
         <p className="text-sm text-gray-500">
-          Үзлэгийн ID: {preview.answer?.id || answerId} • Үзлэг: {preview.inspection.title || 'Гарчиггүй'}
+          {repairInspectionId ? 'Засварын тайлан' : 'Үзлэгийн тайлан'} • {preview.inspection.title || 'Гарчиггүй'}
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -560,7 +840,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Гэрээт компанийн нэр
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.contractor.company || '—'}
+                      {preview.d?.contractor?.company || '—'}
                     </td>
                   </tr>
                   <tr>
@@ -568,7 +848,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Гэрээний дугаар
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.contractor.contract_no || '—'}
+                      {preview.d?.contractor?.contract_no || '—'}
                     </td>
                   </tr>
                   <tr>
@@ -576,7 +856,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Холбоо барих
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.contractor.contact || '—'}
+                      {preview.d?.contractor?.contact || '—'}
                     </td>
                   </tr>
                 </tbody>
@@ -593,7 +873,46 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Огноо
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.metadata.date || '—'}
+                      {answerId && isEditingDate ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="date"
+                            value={editDate}
+                            onChange={(e) => setEditDate(e.target.value)}
+                            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                            disabled={isSaving}
+                          />
+                          <button
+                            onClick={handleSaveDate}
+                            disabled={isSaving}
+                            className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700 disabled:bg-gray-400"
+                          >
+                            {isSaving ? '...' : '✓'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditDate(preview.d?.metadata?.date || '');
+                              setIsEditingDate(false);
+                            }}
+                            disabled={isSaving}
+                            className="px-3 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400 disabled:bg-gray-200"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <div 
+                          className="flex items-center justify-between group cursor-pointer"
+                          onClick={() => answerId && setIsEditingDate(true)}
+                        >
+                          <span>{preview.d?.metadata?.date || '—'}</span>
+                          {answerId && (
+                            <span className="text-xs text-gray-400 opacity-0 group-hover:opacity-100 ml-2">
+                              ✏️
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                   <tr>
@@ -601,7 +920,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Шалгагч
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.metadata.inspector || '—'}
+                      {preview.d?.metadata?.inspector || '—'}
                     </td>
                   </tr>
                   <tr>
@@ -609,7 +928,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Байршил
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.metadata.location || '—'}
+                      {preview.d?.metadata?.location || '—'}
                     </td>
                   </tr>
                   <tr>
@@ -617,7 +936,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Автожингийн дугаар
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.metadata.scale_id_serial_no || '—'}
+                      {preview.d?.metadata?.scale_id_serial_no || '—'}
                     </td>
                   </tr>
                   <tr>
@@ -625,7 +944,7 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
                       Модель
                     </td>
                     <td className="border border-gray-300 px-3 py-2">
-                      {preview.d.metadata.model || '—'}
+                      {preview.d?.metadata?.model || '—'}
                     </td>
                   </tr>
                 </tbody>
@@ -633,84 +952,355 @@ export default function A4Preview({ answerId }: A4PreviewProps) {
             </div>
           </section>
 
-          <TableSection 
-            title="Автожингийн тавцан" 
-            rows={generateRowsFromData(preview.d.exterior, 'exterior', fieldLabels.exterior)} 
-            data={preview.d} 
-            sectionName="exterior" 
-            onImageClick={handleImageToggle} 
-          />
-          <TableSection 
-            title="Тооцоолуур" 
-            rows={generateRowsFromData(preview.d.indicator, 'indicator', fieldLabels.indicator)} 
-            data={preview.d} 
-            sectionName="indicator" 
-            onImageClick={handleImageToggle} 
-          />
-          <TableSection 
-            title="Автожингийн холбогч хайрцаг" 
-            rows={generateRowsFromData(preview.d.jbox, 'jbox', fieldLabels.jbox)} 
-            data={preview.d} 
-            sectionName="jbox" 
-            onImageClick={handleImageToggle} 
-          />
-          <TableSection 
-            title="Мэдрэгч элемент" 
-            rows={generateRowsFromData(preview.d.sensor, 'sensor', fieldLabels.sensor)} 
-            data={preview.d} 
-            sectionName="sensor" 
-            onImageClick={handleImageToggle} 
-          />
-          <TableSection 
-            title="Суурь" 
-            rows={generateRowsFromData(preview.d.foundation, 'foundation', fieldLabels.foundation)} 
-            data={preview.d} 
-            sectionName="foundation" 
-            onImageClick={handleImageToggle} 
-          />
-          <TableSection 
-            title="Автожингийн бохирдол" 
-            rows={generateRowsFromData(preview.d.cleanliness, 'cleanliness', fieldLabels.cleanliness)} 
-            data={preview.d} 
-            sectionName="cleanliness" 
-            onImageClick={handleImageToggle} 
-          />
+          {/* Үзлэгийн тайлангийн хэсгүүд (зөвхөн answerId байгаа үед) */}
+          {!repairInspectionId && preview.d?.exterior && (
+            <>
+              <TableSection 
+                title="Автожингийн тавцан" 
+                rows={generateRowsFromData(preview.d.exterior || {}, 'exterior', fieldLabels.exterior)} 
+                data={preview.d} 
+                sectionName="exterior" 
+                onImageClick={handleImageToggle}
+                answerId={answerId}
+                editingComment={editingComment}
+                editComment={editComment}
+                onEditComment={(section, fieldId, currentComment) => {
+                  setEditingComment({ section, fieldId });
+                  setEditComment(currentComment);
+                }}
+                onSaveComment={handleSaveComment}
+                onCancelComment={handleCancelComment}
+                isSaving={isSaving}
+              />
+              <TableSection 
+                title="Тооцоолуур" 
+                rows={generateRowsFromData(preview.d.indicator || {}, 'indicator', fieldLabels.indicator)} 
+                data={preview.d} 
+                sectionName="indicator" 
+                onImageClick={handleImageToggle}
+                answerId={answerId}
+                editingComment={editingComment}
+                editComment={editComment}
+                onEditComment={(section, fieldId, currentComment) => {
+                  setEditingComment({ section, fieldId });
+                  setEditComment(currentComment);
+                }}
+                onSaveComment={handleSaveComment}
+                onCancelComment={handleCancelComment}
+                isSaving={isSaving}
+              />
+              <TableSection 
+                title="Автожингийн холбогч хайрцаг" 
+                rows={generateRowsFromData(preview.d.jbox || {}, 'jbox', fieldLabels.jbox)} 
+                data={preview.d} 
+                sectionName="jbox" 
+                onImageClick={handleImageToggle}
+                answerId={answerId}
+                editingComment={editingComment}
+                editComment={editComment}
+                onEditComment={(section, fieldId, currentComment) => {
+                  setEditingComment({ section, fieldId });
+                  setEditComment(currentComment);
+                }}
+                onSaveComment={handleSaveComment}
+                onCancelComment={handleCancelComment}
+                isSaving={isSaving}
+              />
+              <TableSection 
+                title="Мэдрэгч элемент" 
+                rows={generateRowsFromData(preview.d.sensor || {}, 'sensor', fieldLabels.sensor)} 
+                data={preview.d} 
+                sectionName="sensor" 
+                onImageClick={handleImageToggle}
+                answerId={answerId}
+                editingComment={editingComment}
+                editComment={editComment}
+                onEditComment={(section, fieldId, currentComment) => {
+                  setEditingComment({ section, fieldId });
+                  setEditComment(currentComment);
+                }}
+                onSaveComment={handleSaveComment}
+                onCancelComment={handleCancelComment}
+                isSaving={isSaving}
+              />
+              <TableSection 
+                title="Суурь" 
+                rows={generateRowsFromData(preview.d.foundation || {}, 'foundation', fieldLabels.foundation)} 
+                data={preview.d} 
+                sectionName="foundation" 
+                onImageClick={handleImageToggle}
+                answerId={answerId}
+                editingComment={editingComment}
+                editComment={editComment}
+                onEditComment={(section, fieldId, currentComment) => {
+                  setEditingComment({ section, fieldId });
+                  setEditComment(currentComment);
+                }}
+                onSaveComment={handleSaveComment}
+                onCancelComment={handleCancelComment}
+                isSaving={isSaving}
+              />
+              <TableSection 
+                title="Автожингийн бохирдол" 
+                rows={generateRowsFromData(preview.d.cleanliness || {}, 'cleanliness', fieldLabels.cleanliness)} 
+                data={preview.d} 
+                sectionName="cleanliness" 
+                onImageClick={handleImageToggle}
+                answerId={answerId}
+                editingComment={editingComment}
+                editComment={editComment}
+                onEditComment={(section, fieldId, currentComment) => {
+                  setEditingComment({ section, fieldId });
+                  setEditComment(currentComment);
+                }}
+                onSaveComment={handleSaveComment}
+                onCancelComment={handleCancelComment}
+                isSaving={isSaving}
+              />
 
-          <section className="px-8 py-6 border-t border-gray-200">
-            <h3 className="font-semibold text-lg uppercase tracking-wide mb-3">
-              Санал, тэмдэглэл
-            </h3>
-            <div className="border border-gray-300 px-4 py-3 min-h-[120px] text-sm whitespace-pre-line">
-              {preview.d.remarks || '—'}
-            </div>
-          </section>
-
-          <section className="px-8 py-6 border-t border-gray-200">
-            <h3 className="font-semibold text-lg uppercase tracking-wide mb-4">
-              Гарын үсэг
-            </h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="border border-gray-300 px-4 py-4 min-h-[140px] flex flex-col justify-between">
-                <p className="text-sm font-medium text-gray-700 mb-4">
-                  Үзлэг хийсэн хүний гарын үсэг
-                </p>
-                {signatureSrc ? (
-                  <img
-                    src={signatureSrc}
-                    alt="Inspector Signature"
-                    className="h-20 object-contain"
-                  />
+              <section className="px-8 py-6 border-t border-gray-200">
+                <h3 className="font-semibold text-lg uppercase tracking-wide mb-3">
+                  Санал, тэмдэглэл
+                </h3>
+                {answerId && isEditingRemarks ? (
+                  <div className="border border-gray-300 px-4 py-3">
+                    <textarea
+                      value={editRemarks}
+                      onChange={(e) => setEditRemarks(e.target.value)}
+                      className="w-full min-h-[120px] text-sm border-0 focus:outline-none resize-none"
+                      disabled={isSaving}
+                      placeholder="Санал тэмдэглэл оруулах..."
+                    />
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        onClick={handleSaveRemarks}
+                        disabled={isSaving}
+                        className="px-4 py-1 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700 disabled:bg-gray-400"
+                      >
+                        {isSaving ? 'Хадгалж байна...' : 'Хадгалах'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditRemarks(preview.d?.remarks || '');
+                          setIsEditingRemarks(false);
+                        }}
+                        disabled={isSaving}
+                        className="px-4 py-1 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400 disabled:bg-gray-200"
+                      >
+                        Цуцлах
+                      </button>
+                    </div>
+                  </div>
                 ) : (
-                  <div className="h-20 flex items-center justify-center text-xs text-gray-400">
-                    Гарын үсэг ирээгүй
+                  <div 
+                    className="border border-gray-300 px-4 py-3 min-h-[120px] text-sm whitespace-pre-line group cursor-pointer relative"
+                    onClick={() => answerId && setIsEditingRemarks(true)}
+                  >
+                    {preview.d.remarks || '—'}
+                    {answerId && (
+                      <span className="absolute top-2 right-2 text-xs text-gray-400 opacity-0 group-hover:opacity-100">
+                        ✏️ Засах
+                      </span>
+                    )}
                   </div>
                 )}
-                <p className="text-xs text-gray-500 mt-4">
-                  Нэр: {preview.d.metadata.inspector || '—'}
-                </p>
+              </section>
+
+              <section className="px-8 py-6 border-t border-gray-200">
+                <h3 className="font-semibold text-lg uppercase tracking-wide mb-4">
+                  Гарын үсэг
+                </h3>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="border border-gray-300 px-4 py-4 min-h-[140px] flex flex-col justify-between">
+                    <p className="text-sm font-medium text-gray-700 mb-4">
+                      Үзлэг хийсэн хүний гарын үсэг
+                    </p>
+                    {signatureSrc ? (
+                      <img
+                        src={signatureSrc}
+                        alt="Inspector Signature"
+                        className="h-20 object-contain"
+                      />
+                    ) : (
+                      <div className="h-20 flex items-center justify-center text-xs text-gray-400">
+                        Гарын үсэг ирээгүй
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500 mt-4">
+                      Нэр: {preview.d?.metadata?.inspector || '—'}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+
+          {/* Засварын тайлангийн хэсгүүд (зөвхөн repairInspectionId байгаа үед) */}
+          {repairInspectionId && preview.d?.repair && (
+            <section className="px-8 py-6 border-t border-gray-200">
+              {/* Section-Field нэрийг харуулах */}
+              <div className="mb-4">
+                <h3 className="font-semibold text-lg uppercase tracking-wide">
+                  {preview.d.repair.section_field || `${preview.d.repair.section} - ${preview.d.repair.field}` || 'Засварын мэдээлэл'}
+                </h3>
               </div>
-            </div>
-          </section>
+
+              {/* Засварын мэдээлэл - хүснэгт */}
+              <div className="overflow-x-auto mb-4">
+                <table className="w-full text-sm border border-gray-300">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="border border-gray-300 px-3 py-2 text-left font-medium">Өмнөх байдал</th>
+                      <th className="border border-gray-300 px-3 py-2 text-left font-medium">Дараах байдал</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="border border-gray-300 px-3 py-2">
+                        {preview.d.repair.before_text || '—'}
+                      </td>
+                      <td className="border border-gray-300 px-3 py-2">
+                        {repairIdString && editingRepairAfterText ? (
+                          <div className="flex flex-col">
+                            <textarea
+                              value={editRepairAfterText}
+                              onChange={(e) => setEditRepairAfterText(e.target.value)}
+                              className="w-full min-h-[60px] text-sm border-0 focus:outline-none resize-none"
+                              disabled={isSaving}
+                              placeholder="Дараах байдлын тайлбар оруулах..."
+                            />
+                            <div className="flex items-center gap-2 mt-2">
+                              <button
+                                onClick={handleSaveRepairAfterText}
+                                disabled={isSaving}
+                                className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700 disabled:bg-gray-400"
+                              >
+                                {isSaving ? '...' : '✓ Хадгалах'}
+                              </button>
+                              <button
+                                onClick={handleCancelRepairAfterText}
+                                disabled={isSaving}
+                                className="px-3 py-1 bg-gray-300 text-gray-700 text-xs rounded hover:bg-gray-400 disabled:bg-gray-200"
+                              >
+                                ✕ Цуцлах
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className="flex items-center justify-between group cursor-pointer min-h-[60px] relative"
+                            onClick={() => {
+                              console.log('[A4Preview] Click repair after_text, repairIdString:', repairIdString);
+                              if (repairIdString) {
+                                setEditingRepairAfterText(true);
+                                setEditRepairAfterText(preview.d?.repair?.after_text || '');
+                              } else {
+                                console.warn('[A4Preview] repairIdString is null/undefined, cannot edit');
+                              }
+                            }}
+                          >
+                            <span className="whitespace-pre-line flex-1">{preview.d.repair.after_text || '—'}</span>
+                            {repairIdString ? (
+                              <span className="text-xs text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity absolute top-2 right-2">
+                                ✏️ Засах
+                              </span>
+                            ) : (
+                              <span className="text-xs text-red-400 opacity-50 absolute top-2 right-2">
+                                (repairId байхгүй)
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                    {/* Зургийн мөр */}
+                    <tr>
+                      <td className="border border-gray-300 px-3 py-2">
+                        {preview.d.repair.beforeImagePreview ? (
+                          <div className="flex items-center justify-center">
+                            <img
+                              src={preview.d.repair.beforeImagePreview.base64 
+                                ? `data:${preview.d.repair.beforeImagePreview.mimeType};base64,${preview.d.repair.beforeImagePreview.base64}`
+                                : preview.d.repair.beforeImagePreview.imageUrl
+                              }
+                              alt="Өмнөх зураг"
+                              className="max-w-[200px] max-h-[150px] object-contain border border-gray-200 rounded cursor-zoom-in"
+                              onClick={() => {
+                                if (!preview.d.repair?.beforeImagePreview) return;
+                                const src = preview.d.repair.beforeImagePreview.base64 
+                                  ? `data:${preview.d.repair.beforeImagePreview.mimeType};base64,${preview.d.repair.beforeImagePreview.base64}`
+                                  : preview.d.repair.beforeImagePreview.imageUrl;
+                                handleImageToggle(src, 'Өмнөх зураг');
+                              }}
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                const errorDiv = document.createElement('div');
+                                errorDiv.className = 'text-gray-400 text-xs';
+                                errorDiv.textContent = 'Зураг ачаалж чадсангүй';
+                                target.parentElement?.appendChild(errorDiv);
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="text-gray-400 text-xs">Зураг байхгүй</div>
+                        )}
+                      </td>
+                      <td className="border border-gray-300 px-3 py-2">
+                        {preview.d.repair.afterImagePreview ? (
+                          <div className="flex items-center justify-center">
+                            <img
+                              src={preview.d.repair.afterImagePreview.base64 
+                                ? `data:${preview.d.repair.afterImagePreview.mimeType};base64,${preview.d.repair.afterImagePreview.base64}`
+                                : preview.d.repair.afterImagePreview.imageUrl
+                              }
+                              alt="Дараах зураг"
+                              className="max-w-[200px] max-h-[150px] object-contain border border-gray-200 rounded cursor-zoom-in"
+                              onClick={() => {
+                                if (!preview.d.repair?.afterImagePreview) return;
+                                const src = preview.d.repair.afterImagePreview.base64 
+                                  ? `data:${preview.d.repair.afterImagePreview.mimeType};base64,${preview.d.repair.afterImagePreview.base64}`
+                                  : preview.d.repair.afterImagePreview.imageUrl;
+                                handleImageToggle(src, 'Дараах зураг');
+                              }}
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                const errorDiv = document.createElement('div');
+                                errorDiv.className = 'text-gray-400 text-xs';
+                                errorDiv.textContent = 'Зураг ачаалж чадсангүй';
+                                target.parentElement?.appendChild(errorDiv);
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="text-gray-400 text-xs">Зураг байхгүй</div>
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Үзлэг хийсэн хүний гарын үсэг */}
+              {preview.d?.signatures?.inspector && (
+                <div className="mt-6 pt-4 border-t border-gray-300">
+                  <h4 className="font-semibold text-sm uppercase tracking-wide mb-3">
+                    Үзлэг хийсэн хүний гарын үсэг
+                  </h4>
+                  <div className="flex justify-start">
+                    {signatureSrc && (
+                      <img
+                        src={signatureSrc}
+                        alt="Гарын үсэг"
+                        className="max-w-[200px] max-h-[80px] object-contain border border-gray-200 rounded"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
         </div>
       </div>
       </div>

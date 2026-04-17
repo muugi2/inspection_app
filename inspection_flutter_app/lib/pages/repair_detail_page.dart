@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:app/services/api.dart';
 import 'package:app/assets/app_colors.dart';
+import 'package:app/utils/error_handler.dart';
 import 'package:app/pages/repair_field_detail_page.dart';
 
 class RepairDetailPage extends StatefulWidget {
@@ -114,7 +115,7 @@ class _RepairDetailPageState extends State<RepairDetailPage> {
     } catch (e) {
       debugPrint('❌ Error loading repair fields: $e');
       setState(() {
-        _error = 'Ачаалах үед алдаа гарлаа: ${e.toString()}';
+        _error = ErrorHandler.handleApiError(e);
         _loading = false;
       });
     }

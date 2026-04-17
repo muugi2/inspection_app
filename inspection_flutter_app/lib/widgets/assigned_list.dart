@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:app/services/api.dart';
 import 'package:app/assets/app_colors.dart';
 import 'package:app/pages/inspection_start_page.dart';
+import 'package:app/pages/install_type_selection_page.dart';
 
 class AssignedItem {
   final String id;
@@ -251,6 +252,14 @@ class _AssignedListState extends State<AssignedList> {
             deviceModelInfo:
                 item.deviceModelInfo, // Item-ийн model мэдээлэл ашиглах
           ),
+        ),
+      );
+    } else if (item.type.toLowerCase() == 'install' || 
+               item.type.toLowerCase() == 'installation') {
+      // Суурьлуулалтын хувьд төрөл сонгох хуудас руу шилжих
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const InstallTypeSelectionPage(),
         ),
       );
     } else {

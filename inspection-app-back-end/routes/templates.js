@@ -187,6 +187,7 @@ router.get('/type/:type', authMiddleware, async (req, res) => {
     const {
       isActive,
       name,
+      deviceType,
       page = 1,
       limit = 10,
       sortBy = 'createdAt',
@@ -205,7 +206,105 @@ router.get('/type/:type', authMiddleware, async (req, res) => {
       });
     }
 
-    // Build where clause
+    // For INSTALLATION type, check if we should use settlement_template table
+    if (normalizedType === 'INSTALLATION') {
+      // Try to fetch from settlement_template using raw SQL
+      try {
+        const queryParams = [];
+        const whereConditions = [];
+
+        // Always filter by type
+        whereConditions.push('type = ?');
+        queryParams.push(normalizedType);
+
+        if (isActive !== undefined) {
+          whereConditions.push('is_active = ?');
+          queryParams.push(isActive === 'true' ? 1 : 0);
+        }
+
+        if (name) {
+          whereConditions.push('name LIKE ?');
+          queryParams.push(`%${name}%`);
+        }
+
+        if (deviceType) {
+          whereConditions.push('device_type = ?');
+          queryParams.push(deviceType.toLowerCase());
+        }
+
+        const whereClause = whereConditions.join(' AND ');
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const take = parseInt(limit);
+
+        // Validate sortBy to prevent SQL injection
+        const allowedSortFields = ['created_at', 'updated_at', 'name', 'id'];
+        const safeSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'created_at';
+        const safeSortOrder = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+        const orderByClause = `${safeSortBy} ${safeSortOrder}`;
+
+        // Count query - using parameterized query
+        const countQuery = `SELECT COUNT(*) as count FROM settlement_template WHERE ${whereClause}`;
+        const countResult = await prisma.$queryRawUnsafe(countQuery, ...queryParams);
+        const totalCount = Number(countResult[0]?.count || 0);
+
+        // Data query - using parameterized query
+        const dataQuery = `
+          SELECT 
+            id, name, type, device_type, description, questions, is_active, 
+            created_at, updated_at
+          FROM settlement_template 
+          WHERE ${whereClause}
+          ORDER BY ${orderByClause}
+          LIMIT ? OFFSET ?
+        `;
+        const dataResult = await prisma.$queryRawUnsafe(
+          dataQuery,
+          ...queryParams,
+          take,
+          skip
+        );
+
+        const templates = dataResult.map(t => ({
+          id: t.id.toString(),
+          name: t.name,
+          type: t.type,
+          deviceType: t.device_type,
+          description: t.description,
+          questions: t.questions,
+          isActive: Boolean(t.is_active),
+          createdAt: t.created_at,
+          updatedAt: t.updated_at,
+        }));
+
+        const totalPages = Math.ceil(totalCount / take);
+
+        return res.json({
+          message: `${normalizedType} templates fetched successfully`,
+          data: serializeBigInt(templates),
+          pagination: {
+            page: parseInt(page),
+            limit: take,
+            totalCount,
+            totalPages,
+            hasNextPage: parseInt(page) < totalPages,
+            hasPrevPage: parseInt(page) > 1,
+          },
+          filters: {
+            type: normalizedType,
+            isActive,
+            name,
+            deviceType,
+            sortBy,
+            sortOrder,
+          },
+        });
+      } catch (settlementError) {
+        console.error('Error fetching from settlement_template:', settlementError);
+        // Fall through to regular InspectionTemplate query
+      }
+    }
+
+    // Build where clause for InspectionTemplate
     const where = {
       type: normalizedType,
     };
@@ -219,6 +318,11 @@ router.get('/type/:type', authMiddleware, async (req, res) => {
         contains: name,
         mode: 'insensitive',
       };
+    }
+
+    // Add deviceType filter if provided
+    if (deviceType) {
+      where.deviceType = deviceType;
     }
 
     // Calculate pagination
@@ -285,10 +389,48 @@ router.get('/type/:type', authMiddleware, async (req, res) => {
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
+    const templateIdBigInt = BigInt(id);
 
+    // First, try to find in settlement_template (for installation templates)
+    try {
+      const settlementTemplate = await prisma.$queryRawUnsafe(`
+        SELECT 
+          id, name, type, device_type, description, questions, is_active, 
+          created_at, updated_at
+        FROM settlement_template 
+        WHERE id = ?
+      `, templateIdBigInt);
+
+      if (settlementTemplate && settlementTemplate.length > 0) {
+        const template = settlementTemplate[0];
+        const formattedTemplate = {
+          id: template.id.toString(),
+          name: template.name,
+          type: template.type,
+          deviceType: template.device_type,
+          device_type: template.device_type,
+          description: template.description,
+          questions: template.questions,
+          isActive: template.is_active === 1,
+          is_active: template.is_active === 1,
+          createdAt: template.created_at,
+          updatedAt: template.updated_at,
+        };
+
+        console.log(`[GET /api/templates/:id] Found template in settlement_template: ${formattedTemplate.name}`);
+        return res.json({
+          message: 'Template fetched successfully',
+          data: formattedTemplate,
+        });
+      }
+    } catch (settlementError) {
+      console.log(`[GET /api/templates/:id] Template not found in settlement_template, trying inspection_templates...`);
+    }
+
+    // Fallback to inspection_templates
     const template = await prisma.InspectionTemplate.findUnique({
       where: {
-        id: BigInt(id),
+        id: templateIdBigInt,
       },
       include: {
         _count: {

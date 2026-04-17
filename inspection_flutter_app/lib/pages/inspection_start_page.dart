@@ -3,6 +3,7 @@ import 'package:app/assets/app_colors.dart';
 import 'package:app/widgets/assigned_list.dart';
 import 'package:app/pages/inspection_run_page.dart';
 import 'package:app/services/api.dart';
+import 'package:app/utils/error_handler.dart';
 
 class InspectionStartPage extends StatefulWidget {
   final AssignedItem item;
@@ -26,10 +27,66 @@ class _InspectionStartPageState extends State<InspectionStartPage> {
   bool _loadingDevices = false;
   String _deviceError = '';
 
+  // Incomplete inspection check
+  Map<String, dynamic>? _incompleteStatus;
+  bool _hasIncompleteInspection = false;
+
   @override
   void initState() {
     super.initState();
     _loadAvailableDevices();
+    _checkIncompleteInspection();
+  }
+
+  // Check if inspection has incomplete status
+  Future<void> _checkIncompleteInspection() async {
+    try {
+      debugPrint('=== CHECKING INCOMPLETE INSPECTION ===');
+      debugPrint('Inspection ID: ${widget.item.id}');
+
+      final response = await InspectionAPI.getIncompleteInspectionStatus(
+        widget.item.id,
+      );
+
+      if (response is Map<String, dynamic>) {
+        final data = response['data'] ?? response;
+        if (data is Map<String, dynamic> && data['isIncomplete'] == true) {
+          setState(() {
+            _incompleteStatus = data;
+            _hasIncompleteInspection = true;
+          });
+          debugPrint('✅ Found incomplete inspection: ${data['answerId']}');
+          debugPrint('Status: ${data['status']}');
+          debugPrint('Progress: ${data['progress']?['percentage']}%');
+          debugPrint('Next section: ${data['nextSection']}');
+          debugPrint('Can continue: ${data['canContinue']}');
+        } else {
+          debugPrint('ℹ️ No incomplete inspection found (isIncomplete: ${data['isIncomplete']})');
+          setState(() {
+            _hasIncompleteInspection = false;
+            _incompleteStatus = null;
+          });
+        }
+      } else {
+        debugPrint('ℹ️ Unexpected response format');
+        setState(() {
+          _hasIncompleteInspection = false;
+          _incompleteStatus = null;
+        });
+      }
+    } catch (e) {
+      // Check if it's a 404 error (no incomplete inspection) vs other errors
+      debugPrint('⚠️ Error checking incomplete inspection: $e');
+      if (e.toString().contains('404') || e.toString().contains('Not Found')) {
+        debugPrint('ℹ️ No incomplete inspection found (404)');
+      } else {
+        debugPrint('❌ Error checking incomplete inspection: $e');
+      }
+      setState(() {
+        _hasIncompleteInspection = false;
+        _incompleteStatus = null;
+      });
+    }
   }
 
   // Device-уудыг татах логик
@@ -111,7 +168,7 @@ class _InspectionStartPageState extends State<InspectionStartPage> {
     } catch (e) {
       debugPrint('Error loading available devices: $e');
       setState(() {
-        _deviceError = 'Төхөөрөмжийн мэдээлэл татахад алдаа гарлаа: $e';
+        _deviceError = ErrorHandler.handleApiError(e);
         _loadingDevices = false;
         _availableDevices = [];
       });
@@ -272,21 +329,13 @@ class _InspectionStartPageState extends State<InspectionStartPage> {
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () {
-          // Жинхэнэ inspection ID ашиглаж InspectionRunPage руу шилжих
-          // widget.item.id нь inspection ID (AssignedList-аас ирсэн)
-          debugPrint('=== NAVIGATING TO INSPECTION ===');
-          debugPrint('Inspection ID: ${widget.item.id}');
-          debugPrint('Device ID: $deviceId');
-          debugPrint('Device Info: $device');
-
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => InspectionRunPage(
-                inspectionId: widget.item.id,
-                deviceInfo: device, // Device мэдээллийг дамжуулах
-              ),
-            ),
-          );
+          // Дутуу үзлэг байвал сонголт гаргах
+          if (_hasIncompleteInspection && _incompleteStatus != null) {
+            _showResumeOrStartDialog(device);
+          } else {
+            // Шинээр эхлэх
+            _startNewInspection(device);
+          }
         },
         child: Padding(
           padding: const EdgeInsets.all(20.0),
@@ -402,5 +451,186 @@ class _InspectionStartPageState extends State<InspectionStartPage> {
         ),
       ),
     );
+  }
+
+  // Show dialog to choose resume or start new
+  void _showResumeOrStartDialog(Map<String, dynamic> device) {
+    final nextSection = _incompleteStatus?['nextSection'] as String?;
+    final answerId = _incompleteStatus?['answerId'] as String?;
+    final lastAnsweredAt = _incompleteStatus?['lastAnsweredAt'] as String?;
+
+    // Format date and time - convert from UTC to local timezone
+    String? formattedDate;
+    if (lastAnsweredAt != null) {
+      try {
+        // Parse as UTC and convert to local timezone
+        final dateTime = DateTime.parse(lastAnsweredAt).toLocal();
+        formattedDate = '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+      } catch (e) {
+        debugPrint('Error parsing date: $e');
+        formattedDate = lastAnsweredAt;
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Үзлэг үргэлжлүүлэх эсвэл шинээр эхлэх'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Progress information
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue[200]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (formattedDate != null)
+                        Row(
+                          children: [
+                            Icon(Icons.access_time, size: 16, color: Colors.blue[700]),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Сүүлд хийсэн: $formattedDate',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.blue[800],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+                if (nextSection != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange[200]!),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_forward, size: 18, color: Colors.orange[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Дараагийн хэсэг: $nextSection',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.orange[900],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                const Text(
+                  'Та юу хийх вэ?',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _startNewInspection(device);
+              },
+              child: const Text('Шинээр эхлэх'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _resumeInspection(device, answerId);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+              ),
+              child: const Text('Үргэлжлүүлэх'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Start new inspection (new record)
+  void _startNewInspection(Map<String, dynamic> device) {
+    debugPrint('=== STARTING NEW INSPECTION ===');
+    debugPrint('Inspection ID: ${widget.item.id}');
+    debugPrint('Device ID: ${device['id']}');
+    debugPrint('Device Info: $device');
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => InspectionRunPage(
+          inspectionId: widget.item.id,
+          deviceInfo: device,
+          // answerId = null гэдэг нь шинэ мөрнөөс хадгалах гэсэн үг
+          answerId: null,
+          resumeData: null,
+        ),
+      ),
+    );
+  }
+
+  // Resume incomplete inspection (existing record)
+  Future<void> _resumeInspection(
+    Map<String, dynamic> device,
+    String? answerId,
+  ) async {
+    debugPrint('=== RESUMING INCOMPLETE INSPECTION ===');
+    debugPrint('Inspection ID: ${widget.item.id}');
+    debugPrint('Answer ID: $answerId');
+    debugPrint('Device ID: ${device['id']}');
+
+    try {
+      // Get resume data
+      final response = await InspectionAPI.getResumeData(widget.item.id);
+      
+      Map<String, dynamic>? resumeData;
+      if (response is Map<String, dynamic>) {
+        resumeData = response['data'] ?? response;
+      }
+
+      if (mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => InspectionRunPage(
+              inspectionId: widget.item.id,
+              deviceInfo: device,
+              // answerId дамжуулах - энэ нь одоогийн мөрөнд хадгалах гэсэн үг
+              answerId: answerId,
+              resumeData: resumeData,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error getting resume data: $e');
+      if (mounted) {
+        ErrorHandler.showError(context, ErrorHandler.handleApiError(e));
+      }
+    }
   }
 }

@@ -4,7 +4,9 @@ import 'package:dio/dio.dart';
 import 'package:app/services/api.dart';
 import 'package:app/assets/app_colors.dart';
 import 'package:app/config/app_config.dart';
+import 'package:app/utils/error_handler.dart';
 import 'package:app/pages/repair_detail_page.dart';
+import 'package:app/pages/repair_assignment_page.dart';
 
 class RepairItem {
   final String id;
@@ -55,16 +57,24 @@ class RepairPage extends StatefulWidget {
   State<RepairPage> createState() => _RepairPageState();
 }
 
-class _RepairPageState extends State<RepairPage> {
+class _RepairPageState extends State<RepairPage> with SingleTickerProviderStateMixin {
   bool _loading = true;
   String _error = '';
   List<InspectionWithRepairs> _inspectionsWithRepairs = [];
   bool _expanded = true;
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -167,7 +177,7 @@ class _RepairPageState extends State<RepairPage> {
       }
 
       setState(() {
-        _error = 'Ачаалах үед алдаа гарлаа: ${e.toString()}';
+        _error = ErrorHandler.handleApiError(e);
         _loading = false;
       });
     }
@@ -400,38 +410,52 @@ class _RepairPageState extends State<RepairPage> {
       );
     }
 
-    if (_inspectionsWithRepairs.isEmpty) {
-      return const Center(
-        child: Text('Одоогоор засвар шаардлагатай үзлэг алга.'),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.only(
-          bottom: 100,
-        ), // Navbar-ийн өргөлтийн хувьд padding
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 8),
-            // Засвар шаардлагатай үзлэгүүд
-            _buildSection(
-              title: 'Засвар шаардлагатай үзлэг',
-              inspections: _inspectionsWithRepairs,
-              emptyMessage: 'Одоогоор засвар шаардлагатай үзлэг алга.',
-              isExpanded: _expanded,
-              onToggle: () {
-                setState(() {
-                  _expanded = !_expanded;
-                });
-              },
-            ),
-            const SizedBox(height: 8),
+    // Always show tab bar and tab view, regardless of whether there are repairs needed
+    // This allows users to access "Засварын томилолт" tab even when no repairs are needed
+    return Column(
+      children: [
+        TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Засвар шаардлагатай'),
+            Tab(text: 'Засварын томилолт'),
           ],
         ),
-      ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              // Засвар шаардлагатай үзлэгүүд
+              RefreshIndicator(
+                onRefresh: _load,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(bottom: 100),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      _buildSection(
+                        title: 'Засвар шаардлагатай үзлэг',
+                        inspections: _inspectionsWithRepairs,
+                        emptyMessage: 'Одоогоор засвар шаардлагатай үзлэг алга.',
+                        isExpanded: _expanded,
+                        onToggle: () {
+                          setState(() {
+                            _expanded = !_expanded;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              ),
+              // Засварын томилолт
+              const RepairAssignmentPage(),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

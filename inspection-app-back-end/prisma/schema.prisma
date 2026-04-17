@@ -49,10 +49,13 @@ model User {
   updatedInspections        Inspection[]               @relation("InspectionsUpdatedBy")
   inspectionAnswers         InspectionAnswer[]
   inspectionQuestionAnswers InspectionQuestionAnswer[]
+  inspectionQuestionImages  InspectionQuestionImage[]
   attachments               Attachment[]
   auditLogs                 AuditLog[]
   repairedItems             Repair[]                   @relation("RepairRepairedBy")
   verifiedItems             Repair[]                   @relation("RepairVerifiedBy")
+  inspectionAssignments     InspectionAssignment[]
+  assignedInspectionAssignments InspectionAssignment[] @relation("InspectionAssignmentsAssignedBy")
 
   @@index([orgId], map: "users_org_id_fkey")
   @@index([roleId], map: "users_role_id_fkey")
@@ -118,7 +121,6 @@ model DeviceModel {
   // Relations
   devices Device[]
 
-  @@unique([manufacturer, model], map: "uk_device_models")
   @@index([manufacturer], map: "idx_device_models_manu")
   @@index([deviceType], map: "idx_device_models_type")
   @@map("device_models")
@@ -196,6 +198,7 @@ model Inspection {
   questionAnswers InspectionQuestionAnswer[]
   attachments     Attachment[]
   repairs         Repair[]
+  assignments     InspectionAssignment[]
 
   @@index([orgId], map: "idx_inspections_org")
   @@index([status], map: "idx_inspections_status")
@@ -214,22 +217,26 @@ model Inspection {
 }
 
 model InspectionAnswer {
-  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
-  inspectionId BigInt    @map("inspection_id") @db.UnsignedBigInt
+  id           BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  inspectionId BigInt                 @map("inspection_id") @db.UnsignedBigInt
   answers      Json
-  docId        BigInt?   @map("pdf_id") @db.UnsignedBigInt
-  answeredBy   BigInt?   @map("answered_by") @db.UnsignedBigInt
-  answeredAt   DateTime? @map("answered_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+  status       InspectionAnswerStatus @default(IN_PROGRESS)
+  docId        BigInt?                @map("pdf_id") @db.UnsignedBigInt
+  answeredBy   BigInt?                @map("answered_by") @db.UnsignedBigInt
+  answeredAt   DateTime?              @map("answered_at")
+  createdAt    DateTime               @default(now()) @map("created_at")
+  updatedAt    DateTime               @default(now()) @updatedAt @map("updated_at")
 
   // Relations
   inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
   user       User?      @relation(fields: [answeredBy], references: [id], onDelete: SetNull)
   doc        DocDetail? @relation(fields: [docId], references: [id])
+  questionImages InspectionQuestionImage[]
+  repairs        Repair[]
 
   @@index([answeredBy], map: "idx_inspection_answers_user")
   @@index([answeredAt], map: "idx_inspection_answers_date")
+  @@index([status], map: "idx_inspection_answers_status")
   @@map("inspection_answers")
 }
 
@@ -415,9 +422,15 @@ enum RepairStatus {
   VERIFIED
 }
 
+enum InspectionAnswerStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
 model Repair {
   id               BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
   inspectionId     BigInt        @map("inspection_id") @db.UnsignedBigInt
+  inspectionAnswerId BigInt?     @map("inspection_answer_id") @db.UnsignedBigInt
   fieldId          String        @map("field_id") @db.VarChar(100)
   section          String        @db.VarChar(200)
   questionText     String        @map("question_text") @db.Text
@@ -433,11 +446,13 @@ model Repair {
 
   // Relations
   inspection Inspection    @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  inspectionAnswer InspectionAnswer? @relation(fields: [inspectionAnswerId], references: [id])
   repairer   User?         @relation("RepairRepairedBy", fields: [repairedBy], references: [id], onDelete: SetNull)
   verifier   User?         @relation("RepairVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
   images     RepairImage[]
 
   @@index([inspectionId], map: "idx_repairs_inspection")
+  @@index([inspectionAnswerId], map: "idx_repairs_inspection_answer")
   @@index([repairedBy], map: "idx_repairs_repairer")
   @@index([verifiedBy], map: "idx_repairs_verifier")
   @@index([repairStatus], map: "idx_repairs_status")
@@ -457,4 +472,47 @@ model RepairImage {
 
   @@index([repairId], map: "idx_repair_images_repair")
   @@map("repair_images")
+}
+
+model InspectionQuestionImage {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  answerId   BigInt   @map("answer_id") @db.UnsignedBigInt
+  fieldId    String   @map("field_id") @db.VarChar(100)
+  section    String   @db.VarChar(200)
+  imageOrder Int      @map("image_order") @default(1)
+  imageUrl   String   @map("image_url") @db.VarChar(500)
+  uploadedBy BigInt   @map("uploaded_by") @db.UnsignedBigInt
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relations
+  answer     InspectionAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  uploader   User             @relation(fields: [uploadedBy], references: [id], onDelete: Restrict)
+
+  @@index([answerId], map: "idx_answer_id")
+  @@index([fieldId, section], map: "idx_field_section")
+  @@index([uploadedBy], map: "idx_uploaded_by")
+  @@index([uploadedAt], map: "idx_uploaded_at")
+  @@index([answerId, fieldId, imageOrder], map: "idx_answer_field_order")
+  @@map("inspection_question_images")
+}
+
+model InspectionAssignment {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  inspectionId BigInt   @map("inspection_id") @db.UnsignedBigInt
+  userId       BigInt   @map("user_id") @db.UnsignedBigInt
+  assignedBy   BigInt   @map("assigned_by") @db.UnsignedBigInt
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assigner   User       @relation("InspectionAssignmentsAssignedBy", fields: [assignedBy], references: [id], onDelete: Restrict)
+
+  @@unique([inspectionId, userId], map: "uk_inspection_assignment")
+  @@index([inspectionId], map: "idx_inspection_assignment_inspection")
+  @@index([userId], map: "idx_inspection_assignment_user")
+  @@index([assignedBy], map: "idx_inspection_assignment_assigner")
+  @@map("inspection_assignments")
 }

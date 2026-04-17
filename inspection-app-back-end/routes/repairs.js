@@ -89,15 +89,35 @@ const upload = multer({
 // =============================================================================
 
 async function verifyInspectionAccess(inspectionId, userId, orgId) {
+  // Check if user is admin
+  const user = await prisma.User.findUnique({
+    where: { id: BigInt(userId) },
+    include: {
+      role: {
+        select: { name: true }
+      }
+    }
+  });
+
+  const isAdmin = user?.role?.name?.toLowerCase() === 'admin';
+
+  // Admin users can access all inspections
+  const whereClause = isAdmin 
+    ? {
+        id: inspectionId,
+        deletedAt: null,
+      }
+    : {
+        id: inspectionId,
+        OR: [
+          { orgId: BigInt(orgId) },
+          { assignedTo: BigInt(userId) }
+        ],
+        deletedAt: null,
+      };
+
   const inspection = await prisma.Inspection.findFirst({
-    where: {
-      id: inspectionId,
-      OR: [
-        { orgId: BigInt(orgId) },
-        { assignedTo: BigInt(userId) }
-      ],
-      deletedAt: null,
-    },
+    where: whereClause,
   });
 
   if (!inspection) {
@@ -120,13 +140,13 @@ router.post('/analyze/:inspectionId', authMiddleware, async (req, res) => {
     // Verify access
     await verifyInspectionAccess(inspectionId, userId, req.user.orgId);
 
-    // Get all answers for this inspection
-    const answers = await prisma.InspectionAnswer.findMany({
+    // Get latest answer for this inspection (we'll link repairs to this answer)
+    const latestAnswer = await prisma.InspectionAnswer.findFirst({
       where: { inspectionId },
-      orderBy: { answeredAt: 'asc' },
+      orderBy: { answeredAt: 'desc' },
     });
 
-    if (answers.length === 0) {
+    if (!latestAnswer) {
       return res.json({
         message: 'No answers found for this inspection',
         data: {
@@ -137,8 +157,6 @@ router.post('/analyze/:inspectionId', authMiddleware, async (req, res) => {
       });
     }
 
-    // Get latest answer
-    const latestAnswer = answers[answers.length - 1];
     const answerData = latestAnswer.answers || {};
     
     // Support multiple JSON structures:
@@ -237,6 +255,7 @@ router.post('/analyze/:inspectionId', authMiddleware, async (req, res) => {
             // Prepare repair data
             const repairData = {
               inspectionId,
+              inspectionAnswerId: latestAnswer.id,
               fieldId,
               section: sectionName,
               questionText,
@@ -291,6 +310,7 @@ router.post('/analyze/:inspectionId', authMiddleware, async (req, res) => {
         repairs: repairsCreated.map(r => ({
           id: r.id.toString(),
           inspectionId: r.inspectionId.toString(),
+          inspectionAnswerId: r.inspectionAnswerId ? r.inspectionAnswerId.toString() : null,
           fieldId: r.fieldId,
           section: r.section,
           questionText: r.questionText,
@@ -366,15 +386,21 @@ router.get('/', authMiddleware, async (req, res) => {
       where.repairStatus = status.toUpperCase();
     }
 
-    // Filter by organization access
+    // Filter by organization access (skip for admin users)
     const userId = BigInt(req.user.id);
     const user = await prisma.User.findUnique({
       where: { id: userId },
-      select: { orgId: true },
+      include: {
+        role: {
+          select: { name: true }
+        }
+      },
     });
 
-    if (user) {
-      // Get inspections accessible by user
+    const isAdmin = user?.role?.name?.toLowerCase() === 'admin';
+    
+    if (user && !isAdmin) {
+      // Get inspections accessible by user (non-admin users only)
       const inspections = await prisma.Inspection.findMany({
         where: {
           OR: [
@@ -387,8 +413,27 @@ router.get('/', authMiddleware, async (req, res) => {
       });
 
       const inspectionIds = inspections.map(i => i.id);
+      
+      // Debug: Check if there are any repairs for these inspections
+      if (inspectionIds.length === 0) {
+        console.log('⚠️  [GET /api/repairs] No accessible inspections found for user');
+        console.log('   User orgId:', user.orgId.toString());
+        console.log('   User ID:', userId.toString());
+      } else {
+        console.log('   Filtered by inspections:', inspectionIds.map(id => id.toString()));
+        
+        // Debug: Check total repairs for these inspections
+        const totalRepairsForInspections = await prisma.Repair.count({
+          where: {
+            inspectionId: { in: inspectionIds }
+          }
+        });
+        console.log('   Total repairs for accessible inspections:', totalRepairsForInspections);
+      }
+      
       where.inspectionId = { in: inspectionIds };
-      console.log('   Filtered by inspections:', inspectionIds.map(id => id.toString()));
+    } else if (isAdmin) {
+      console.log('✅ [GET /api/repairs] Admin user - showing all repairs');
     }
 
     console.log('   Final where clause:', JSON.stringify(where, (key, value) => 
@@ -521,7 +566,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const repairId = BigInt(req.params.id);
     const userId = BigInt(req.user.id);
-    const { description, repairedStatus, repairStatus, repairedAt, verifiedAt } = req.body;
+    const { description, repairDescription, repairedStatus, repairStatus, repairedAt, verifiedAt } = req.body;
 
     const repair = await prisma.Repair.findUnique({
       where: { id: repairId },
@@ -539,7 +584,10 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     const updateData = {};
 
-    if (description !== undefined) {
+    // Support both 'description' and 'repairDescription' field names
+    if (repairDescription !== undefined) {
+      updateData.repairDescription = repairDescription;
+    } else if (description !== undefined) {
       updateData.repairDescription = description; // Use correct field name from schema
     }
 
@@ -659,27 +707,62 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
 
       try {
         if (fs.existsSync(oldFilePath)) {
+          // Ensure destination directory exists
+          const destDir = path.dirname(newFilePath);
+          if (!fs.existsSync(destDir)) {
+            fs.mkdirSync(destDir, { recursive: true });
+            console.log(`📁 Created directory: ${destDir}`);
+          }
+          
           // Copy file to storage (instead of rename to avoid issues)
           fs.copyFileSync(oldFilePath, newFilePath);
+          
+          // Verify file was copied successfully
+          if (!fs.existsSync(newFilePath)) {
+            console.error(`❌ File copy failed: ${newFilePath} does not exist after copy`);
+            continue;
+          }
+          
           // Delete temp file
           fs.unlinkSync(oldFilePath);
-          console.log(`✅ Saved image to: ${newFilePath}`);
+          console.log(`✅ Saved image to: ${newFilePath} (${fs.statSync(newFilePath).size} bytes)`);
         } else {
           console.error(`❌ Temp file not found: ${oldFilePath}`);
           continue;
         }
       } catch (fileError) {
-        console.error(`❌ Error saving file: ${fileError.message}`);
+        console.error(`❌ Error saving file:`, {
+          message: fileError.message,
+          code: fileError.code,
+          oldPath: oldFilePath,
+          newPath: newFilePath,
+          stack: fileError.stack,
+        });
         continue;
       }
 
       // Build image URL (use filename only, no subfolder prefix)
+      // For repair images, use direct public URL without prefix
       const relativePath = newFileName;
-      const publicUrl = buildPublicUrl(relativePath);
-      const imageUrl = publicUrl || relativePath;
+      let publicUrl = buildPublicUrl(relativePath);
+      
+      // If buildPublicUrl returns null, construct URL manually
+      if (!publicUrl) {
+        const FTP_PUBLIC_BASE_URL = process.env.FTP_PUBLIC_BASE_URL || 'http://192.168.1.35:4555/uploads';
+        publicUrl = `${FTP_PUBLIC_BASE_URL}/${newFileName}`;
+      }
+      
+      const imageUrl = publicUrl;
 
       // Save to repair_images table
       try {
+        console.log(`💾 Saving repair image to database:`, {
+          repairId: repairId.toString(),
+          imageUrl,
+          fileName: newFileName,
+          filePath: newFilePath,
+        });
+        
         const repairImage = await prisma.RepairImage.create({
           data: {
             repairId,
@@ -699,10 +782,21 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
 
         console.log(`✅ Saved repair image to database: ${repairImage.id.toString()}`);
       } catch (dbError) {
-        console.error(`❌ Error saving to database: ${dbError.message}`);
+        console.error(`❌ Error saving to database:`, {
+          message: dbError.message,
+          code: dbError.code,
+          meta: dbError.meta,
+          stack: dbError.stack,
+          repairId: repairId.toString(),
+          imageUrl,
+          fileName: newFileName,
+        });
         // Clean up file if database save fails
         try {
-          fs.unlinkSync(newFilePath);
+          if (fs.existsSync(newFilePath)) {
+            fs.unlinkSync(newFilePath);
+            console.log(`🗑️ Cleaned up file after database error: ${newFilePath}`);
+          }
         } catch (cleanupError) {
           console.error(`❌ Error cleaning up file: ${cleanupError.message}`);
         }

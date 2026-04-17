@@ -145,6 +145,7 @@ export default function DeviceModelsPage() {
       return;
     }
 
+    // Prepare specs object for comparison
     const specs: any = {};
     if (formData.maxWeight) specs.max_weight = formData.maxWeight;
     if (formData.minWeight) specs.min_weight = formData.minWeight;
@@ -158,6 +159,41 @@ export default function DeviceModelsPage() {
       specs.platform_size = formData.platformWidth;
     }
     if (formData.platformCount) specs.platform_count = parseInt(formData.platformCount);
+
+    // Normalize form data for comparison
+    const normalizedManufacturer = formData.manufacturer.trim().toLowerCase();
+    const normalizedModel = formData.model.trim().toLowerCase();
+    const normalizedDeviceType = formData.deviceType.trim().toUpperCase();
+    // Sort specs keys for consistent comparison
+    const normalizedSpecs = JSON.stringify(specs, Object.keys(specs).sort());
+    
+    // Check for duplicate: manufacturer, model, device_type, and specs must all match
+    const duplicate = models.find(model => {
+      // When editing, exclude the current model from duplicate check
+      if (editingModel && model.id === editingModel.id) {
+        return false;
+      }
+      
+      const existingManufacturer = (model.manufacturer || '').trim().toLowerCase();
+      const existingModel = (model.model || '').trim().toLowerCase();
+      const existingDeviceType = ((model as any).deviceType || '').trim().toUpperCase();
+      
+      // Normalize existing specs for comparison
+      const existingSpecs = model.specs || {};
+      const normalizedExistingSpecs = JSON.stringify(existingSpecs, Object.keys(existingSpecs).sort());
+      
+      // All four fields must match exactly
+      return existingManufacturer === normalizedManufacturer && 
+             existingModel === normalizedModel &&
+             existingDeviceType === normalizedDeviceType &&
+             normalizedExistingSpecs === normalizedSpecs;
+    });
+
+    if (duplicate) {
+      const existingSpecsText = duplicate.specs ? JSON.stringify(duplicate.specs, null, 2) : 'Байхгүй';
+      alert(`❌ Алдаа: Энэ мэдээлэл аль хэдийн бүртгэгдсэн байна.\n\nБүртгэгдсэн загвар:\n- Үйлдвэрлэгч: ${duplicate.manufacturer}\n- Загвар: ${duplicate.model}\n- Төхөөрөмжийн төрөл: ${(duplicate as any).deviceType || 'Байхгүй'}\n- Техникийн үзүүлэлт: ${existingSpecsText}\n\nТа дор хаяж 1 зүйлийг өөрчлөнө үү.`);
+      return;
+    }
 
     try {
       setIsSaving(true);

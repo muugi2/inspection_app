@@ -63,21 +63,6 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if model already exists
-    const existingModel = await prisma.DeviceModel.findFirst({
-      where: {
-        manufacturer,
-        model,
-      },
-    });
-
-    if (existingModel) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        message: 'Device model already exists',
-      });
-    }
-
     // Validate specs is valid JSON if provided
     if (specs && typeof specs !== 'object') {
       return res.status(400).json({
@@ -136,25 +121,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
         error: 'Not found',
         message: 'Device model not found',
       });
-    }
-
-    // Check if updated model name already exists
-    if ((manufacturer || model) &&
-        (manufacturer !== existingModel.manufacturer || model !== existingModel.model)) {
-      const duplicateModel = await prisma.DeviceModel.findFirst({
-        where: {
-          manufacturer: manufacturer || existingModel.manufacturer,
-          model: model || existingModel.model,
-          id: { not: BigInt(id) },
-        },
-      });
-
-      if (duplicateModel) {
-        return res.status(400).json({
-          error: 'Validation failed',
-          message: 'Device model already exists',
-        });
-      }
     }
 
     // Validate deviceType

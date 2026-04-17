@@ -39,6 +39,15 @@ class ErrorHandler {
   /// Handle API errors and return user-friendly message
   static String handleApiError(dynamic error) {
     if (error is DioException) {
+      // Check for internet connection issues first
+      if (error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError ||
+          (error.response == null && error.type != DioExceptionType.badResponse)) {
+        return 'Интернет холболтоо шалгана уу';
+      }
+
       final statusCode = error.response?.statusCode;
       final serverMessage = _extractServerMessage(error.response?.data);
 
@@ -62,11 +71,15 @@ class ErrorHandler {
     }
 
     final errorStr = error.toString();
-    if (errorStr.contains('SocketException')) {
-      return 'Сүлжээний холболт алдаатай байна';
+    if (errorStr.contains('SocketException') ||
+        errorStr.contains('Failed host lookup') ||
+        errorStr.contains('Network is unreachable') ||
+        errorStr.contains('No address associated with hostname')) {
+      return 'Интернет холболтоо шалгана уу';
     }
-    if (errorStr.contains('TimeoutException')) {
-      return 'Холболт хэт удаан байна';
+    if (errorStr.contains('TimeoutException') ||
+        errorStr.contains('Timeout')) {
+      return 'Интернет холболтоо шалгана уу';
     }
     if (errorStr.contains('409')) {
       return 'Энэ талбарт аль хэдийн зураг байна. Өмнөх зургийг устгана уу.';

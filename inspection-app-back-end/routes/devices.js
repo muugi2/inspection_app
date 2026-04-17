@@ -95,15 +95,16 @@ router.post('/', authMiddleware, async (req, res) => {
       metadata,
     } = req.body;
 
-    // Validation
-    if (!orgId || !siteId || !contractId || !modelId || !serialNumber || !assetTag) {
+    // Validation - only modelId is required for repair assignment
+    if (!modelId) {
       return res.status(400).json({
         error: 'Validation failed',
-        message: 'Organization, site, contract, model, serial number, and asset tag are required',
+        message: 'Device model is required',
       });
     }
 
-    // Check if serial number already exists
+    // Check if serial number already exists (if provided)
+    if (serialNumber) {
     const existingDevice = await prisma.Device.findFirst({
       where: { serialNumber },
     });
@@ -114,36 +115,47 @@ router.post('/', authMiddleware, async (req, res) => {
         message: 'Serial number already exists',
       });
     }
-
-    // Check if related records exist
-    const [organization, site, contract, model] = await Promise.all([
-      prisma.Organization.findUnique({ where: { id: BigInt(orgId) } }),
-      prisma.Site.findUnique({ where: { id: BigInt(siteId) } }),
-      prisma.Contract.findUnique({ where: { id: BigInt(contractId) } }),
-      prisma.DeviceModel.findUnique({ where: { id: BigInt(modelId) } }),
-    ]);
-
-    if (!organization) {
-      return res.status(404).json({
-        error: 'Not found',
-        message: 'Organization not found',
-      });
     }
 
-    if (!site) {
+    // Check if related records exist (only if provided)
+    const checks = [];
+    if (orgId) {
+      checks.push(
+        prisma.Organization.findUnique({ where: { id: BigInt(orgId) } })
+          .then(org => ({ type: 'organization', data: org }))
+      );
+    }
+    if (siteId) {
+      checks.push(
+        prisma.Site.findUnique({ where: { id: BigInt(siteId) } })
+          .then(site => ({ type: 'site', data: site }))
+      );
+    }
+    if (contractId) {
+      checks.push(
+        prisma.Contract.findUnique({ where: { id: BigInt(contractId) } })
+          .then(contract => ({ type: 'contract', data: contract }))
+      );
+    }
+    checks.push(
+      prisma.DeviceModel.findUnique({ where: { id: BigInt(modelId) } })
+        .then(model => ({ type: 'model', data: model }))
+    );
+
+    const results = await Promise.all(checks);
+
+    // Verify all provided records exist
+    for (const result of results) {
+      if (!result.data) {
       return res.status(404).json({
         error: 'Not found',
-        message: 'Site not found',
+          message: `${result.type.charAt(0).toUpperCase() + result.type.slice(1)} not found`,
       });
+      }
     }
 
-    if (!contract) {
-      return res.status(404).json({
-        error: 'Not found',
-        message: 'Contract not found',
-      });
-    }
-
+    // Get model (required)
+    const model = results.find(r => r.type === 'model')?.data;
     if (!model) {
       return res.status(404).json({
         error: 'Not found',
@@ -151,33 +163,45 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
-    // Verify site belongs to organization
-    if (site.orgId.toString() !== orgId) {
+    // Verify relationships if provided
+    const organization = results.find(r => r.type === 'organization')?.data;
+    const site = results.find(r => r.type === 'site')?.data;
+    const contract = results.find(r => r.type === 'contract')?.data;
+
+    if (site && organization && site.orgId.toString() !== orgId) {
       return res.status(400).json({
         error: 'Validation failed',
         message: 'Site does not belong to the specified organization',
       });
     }
 
-    // Verify contract belongs to organization
-    if (contract.orgId.toString() !== orgId) {
+    if (contract && organization && contract.orgId.toString() !== orgId) {
       return res.status(400).json({
         error: 'Validation failed',
         message: 'Contract does not belong to the specified organization',
       });
     }
 
-    // Create device
+    // If orgId not provided, use assignment's orgId or get from user's orgId
+    const finalOrgId = orgId || req.user.orgId?.toString();
+    if (!finalOrgId) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: 'Organization ID is required (either provide orgId or user must have orgId)',
+      });
+    }
+
+    // Create device - allow null values for optional fields
     const device = await prisma.Device.create({
       data: {
-        orgId: BigInt(orgId),
-        siteId: BigInt(siteId),
-        contractId: BigInt(contractId),
+        orgId: BigInt(finalOrgId),
+        siteId: siteId ? BigInt(siteId) : null,
+        contractId: contractId ? BigInt(contractId) : null,
         modelId: BigInt(modelId),
-        serialNumber,
-        assetTag,
-        status: status || 'NORMAL',
-        installedAt: installedAt ? new Date(installedAt) : new Date(),
+        serialNumber: serialNumber || `TEMP-${Date.now()}`, // Generate temp serial if not provided
+        assetTag: assetTag || null,
+        status: status || 'IN_STOCK',
+        installedAt: installedAt ? new Date(installedAt) : null,
         metadata: metadata || {},
       },
       include: {

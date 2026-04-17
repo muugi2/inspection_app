@@ -3,6 +3,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:app/assets/app_colors.dart';
 import 'package:app/services/api.dart';
 import 'package:app/utils/api_response_parser.dart';
+import 'package:app/utils/error_handler.dart';
 
 class PlanPage extends StatefulWidget {
   const PlanPage({super.key});
@@ -51,19 +52,64 @@ class _PlanPageState extends State<PlanPage> {
           
           // Зөвхөн дуусаагүй үзлэгүүдийг календар дээр тэмдэглэх
           if (!isCompleted) {
-            // scheduledAt огноо
-            if (item['scheduledAt'] != null) {
-              final scheduledAt = _parseDate(item['scheduledAt']);
-              if (scheduledAt != null) {
-                dates.add(scheduledAt);
-              }
-            }
+            final scheduleType = item['scheduleType']?.toString().toUpperCase();
+            final scheduledAt = item['scheduledAt'] != null 
+                ? _parseDate(item['scheduledAt']) 
+                : null;
             
-            // startedAt огноо
-            if (item['startedAt'] != null) {
-              final startedAt = _parseDate(item['startedAt']);
-              if (startedAt != null) {
-                dates.add(startedAt);
+            // startedAt болон completedAt-ийг шалгах (бүх төрлийн үзлэгт)
+            DateTime? startDate = item['startedAt'] != null 
+                ? _parseDate(item['startedAt']) 
+                : null;
+            DateTime? endDate = item['completedAt'] != null 
+                ? _parseDate(item['completedAt']) 
+                : null;
+            
+            debugPrint('🔍 [Calendar] Processing inspection: ${item['id']}');
+            debugPrint('  - scheduleType: $scheduleType');
+            debugPrint('  - startedAt: ${item['startedAt']} -> $startDate');
+            debugPrint('  - completedAt: ${item['completedAt']} -> $endDate');
+            debugPrint('  - scheduledAt: ${item['scheduledAt']} -> $scheduledAt');
+            
+            // Хэрэв startDate болон endDate байвал бүх өдрүүдийг нэмэх (бүх төрлийн үзлэгт)
+            if (startDate != null && endDate != null) {
+              // Ensure endDate is after or equal to startDate
+              if (endDate.isBefore(startDate)) {
+                debugPrint('⚠️ [Calendar] endDate is before startDate, swapping dates');
+                final temp = startDate;
+                startDate = endDate;
+                endDate = temp;
+              }
+              
+              DateTime currentDate = DateTime(
+                startDate.year,
+                startDate.month,
+                startDate.day,
+              );
+              final end = DateTime(
+                endDate.year,
+                endDate.month,
+                endDate.day,
+              );
+              
+              debugPrint('📅 [Calendar] Adding dates from $currentDate to $end');
+              
+              // startDate-аас endDate хүртэл бүх өдрүүдийг нэмэх
+              int dateCount = 0;
+              while (currentDate.isBefore(end) || currentDate.isAtSameMomentAs(end)) {
+                dates.add(currentDate);
+                dateCount++;
+                debugPrint('  - Adding date: $currentDate');
+                currentDate = currentDate.add(const Duration(days: 1));
+              }
+              debugPrint('✅ [Calendar] Added $dateCount dates to calendar');
+            } else {
+              // endDate эсвэл startDate байхгүй бол scheduledAt-ийг нэмэх
+              if (scheduledAt != null) {
+                debugPrint('⚠️ [Calendar] startDate or endDate is null, adding only scheduledAt: $scheduledAt');
+                dates.add(scheduledAt);
+              } else {
+                debugPrint('⚠️ [Calendar] No valid date found for inspection');
               }
             }
           }
@@ -77,7 +123,7 @@ class _PlanPageState extends State<PlanPage> {
       });
     } catch (e) {
       setState(() {
-        _error = 'Үзлэгийн мэдээлэл ачаалахад алдаа гарлаа: $e';
+        _error = ErrorHandler.handleApiError(e);
         _isLoading = false;
       });
     }
@@ -113,28 +159,42 @@ class _PlanPageState extends State<PlanPage> {
 
   List<Map<String, dynamic>> _getInspectionsForDay(DateTime day) {
     return _allInspections.where((inspection) {
+      final scheduledAt = inspection['scheduledAt'] != null 
+          ? _parseDate(inspection['scheduledAt']) 
+          : null;
+      
+      // startedAt болон completedAt-ийг шалгах (бүх төрлийн үзлэгт)
+      DateTime? startDate = inspection['startedAt'] != null 
+          ? _parseDate(inspection['startedAt']) 
+          : null;
+      DateTime? endDate = inspection['completedAt'] != null 
+          ? _parseDate(inspection['completedAt']) 
+          : null;
+      
+      // Хэрэв startDate болон endDate байвал огнооны хүрээнд байгаа эсэхийг шалгах
+      if (startDate != null && endDate != null) {
+        final start = DateTime(
+          startDate.year,
+          startDate.month,
+          startDate.day,
+        );
+        final end = DateTime(
+          endDate.year,
+          endDate.month,
+          endDate.day,
+        );
+        final checkDay = DateTime(day.year, day.month, day.day);
+        
+        // Тухайн өдөр startDate-аас endDate хүртэлх хүрээнд байгаа эсэхийг шалгах
+        if ((checkDay.isAfter(start) || checkDay.isAtSameMomentAs(start)) &&
+            (checkDay.isBefore(end) || checkDay.isAtSameMomentAs(end))) {
+          return true;
+        }
+      }
+      
       // scheduledAt шалгах
-      if (inspection['scheduledAt'] != null) {
-        final scheduledAt = _parseDate(inspection['scheduledAt']);
-        if (scheduledAt != null && _isSameDay(scheduledAt, day)) {
-          return true;
-        }
-      }
-      
-      // startedAt шалгах
-      if (inspection['startedAt'] != null) {
-        final startedAt = _parseDate(inspection['startedAt']);
-        if (startedAt != null && _isSameDay(startedAt, day)) {
-          return true;
-        }
-      }
-      
-      // completedAt шалгах
-      if (inspection['completedAt'] != null) {
-        final completedAt = _parseDate(inspection['completedAt']);
-        if (completedAt != null && _isSameDay(completedAt, day)) {
-          return true;
-        }
+      if (scheduledAt != null && _isSameDay(scheduledAt, day)) {
+        return true;
       }
       
       return false;

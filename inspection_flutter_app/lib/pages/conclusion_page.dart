@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:app/assets/app_colors.dart';
 import 'package:app/pages/dashboard_page.dart';
+import 'package:app/pages/repair_page.dart';
 import 'package:app/services/api.dart';
+import 'package:app/utils/error_handler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:signature/signature.dart';
 import 'package:path_provider/path_provider.dart';
@@ -188,22 +190,7 @@ class _ConclusionPageState extends State<ConclusionPage> {
     } catch (e) {
       debugPrint('Гарын үсэг хадгалахад алдаа гарлаа: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.error, color: Colors.white, size: 20),
-                const SizedBox(width: 8),
-                Text('Гарын үсэг хадгалахад алдаа гарлаа: $e'),
-              ],
-            ),
-            backgroundColor: Colors.red[600],
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        );
+        ErrorHandler.showError(context, ErrorHandler.handleApiError(e));
       }
     }
   }
@@ -294,12 +281,7 @@ class _ConclusionPageState extends State<ConclusionPage> {
       );
     } catch (e) {
       debugPrint('❌ Error submitting signature: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Гарын үсэг хадгалахад алдаа гарлаа: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ErrorHandler.showError(context, ErrorHandler.handleApiError(e));
     }
   }
 
@@ -760,6 +742,19 @@ class _ConclusionPageState extends State<ConclusionPage> {
                                 debugPrint('ℹ️ No signature to submit');
                               }
 
+                              // Analyze inspection and create repairs for "Солих" and "Сайжруулах" items
+                              debugPrint('🔍 Analyzing inspection for repairs...');
+                              int repairsCreated = 0;
+                              try {
+                                final analyzeResponse = await RepairAPI.analyzeRepairs(widget.inspectionId);
+                                repairsCreated = analyzeResponse['data']?['repairsCreated'] ?? 0;
+                                debugPrint('✅ Repairs analyzed and created successfully: $repairsCreated repair(s)');
+                              } catch (analyzeError) {
+                                debugPrint('⚠️ Error analyzing repairs: $analyzeError');
+                                // Don't fail the whole submission if repair analysis fails
+                                // Just log the error
+                              }
+
                               // Show success message
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -773,25 +768,60 @@ class _ConclusionPageState extends State<ConclusionPage> {
                                   ),
                                 );
 
-                                // Navigate back to main dashboard
+                                // If repairs were created, show dialog to navigate to repair page
+                                if (repairsCreated > 0) {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) => AlertDialog(
+                                      title: const Text('Засвар шаардлагатай'),
+                                      content: Text(
+                                        '$repairsCreated засвар үүсгэгдлээ. Засварын хуудас руу очих уу?',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () {
+                                            Navigator.of(context).pop();
+                                            Navigator.of(context).pushAndRemoveUntil(
+                                              MaterialPageRoute(
+                                                builder: (_) => const DashboardPage(),
+                                              ),
+                                              (_) => false,
+                                            );
+                                          },
+                                          child: const Text('Үгүй'),
+                                        ),
+                                        ElevatedButton(
+                                          onPressed: () {
+                                            Navigator.of(context).pop();
+                                            Navigator.of(context).pushAndRemoveUntil(
+                                              MaterialPageRoute(
+                                                builder: (_) => const RepairPage(),
+                                              ),
+                                              (_) => false,
+                                            );
+                                          },
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: AppColors.primary,
+                                          ),
+                                          child: const Text('Тийм'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                } else {
+                                  // No repairs, just navigate back to dashboard
                                 Navigator.of(context).pushAndRemoveUntil(
                                   MaterialPageRoute(
                                     builder: (_) => const DashboardPage(),
                                   ),
                                   (_) => false,
                                 );
+                                }
                               }
                             } catch (e) {
                               // Show error message
                               if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Хадгалахад алдаа гарлаа: $e',
-                                    ),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
+                                ErrorHandler.showError(context, ErrorHandler.handleApiError(e));
                               }
                             } finally {
                               if (mounted) {

@@ -4,6 +4,7 @@ import 'package:app/services/api.dart';
 import 'package:app/assets/app_colors.dart';
 import 'package:app/pages/inspection_start_page.dart';
 import 'package:app/utils/api_response_parser.dart';
+import 'package:app/utils/error_handler.dart';
 import 'package:app/widgets/assigned_list.dart';
 
 class InspectionGroupedItem {
@@ -44,8 +45,10 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
   String _error = '';
   List<InspectionGroupedItem> _dailyItems = [];
   List<InspectionGroupedItem> _scheduledItems = [];
+  List<InspectionGroupedItem> _assignmentItems = [];
   bool _dailyExpanded = false;
   bool _scheduledExpanded = false;
+  bool _assignmentExpanded = false;
 
   @override
   void initState() {
@@ -81,17 +84,29 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
       final scheduledParsed = await _parseResponseWithDeviceInfo(scheduledRawItems);
       debugPrint('✅ SCHEDULED parsed items count: ${scheduledParsed.length}');
 
+      // Load assignment inspections (MAINTENANCE type)
+      debugPrint('🔍 Loading MAINTENANCE (assignment) inspections...');
+      final assignmentResponse = await InspectionAPI.getAssignedByType('MAINTENANCE');
+      final assignmentRawItems = ApiResponseParser.parseListResponse(assignmentResponse);
+      debugPrint('📋 MAINTENANCE raw items count: ${assignmentRawItems.length}');
+      if (assignmentRawItems.isNotEmpty) {
+        debugPrint('📋 First MAINTENANCE item: ${assignmentRawItems[0]}');
+      }
+      final assignmentParsed = await _parseResponseWithDeviceInfo(assignmentRawItems);
+      debugPrint('✅ MAINTENANCE parsed items count: ${assignmentParsed.length}');
+
       setState(() {
         _dailyItems = dailyParsed;
         _scheduledItems = scheduledParsed;
+        _assignmentItems = assignmentParsed;
         _loading = false;
       });
       
-      debugPrint('📊 Final state: DAILY=${dailyParsed.length}, SCHEDULED=${scheduledParsed.length}');
+      debugPrint('📊 Final state: DAILY=${dailyParsed.length}, SCHEDULED=${scheduledParsed.length}, ASSIGNMENT=${assignmentParsed.length}');
     } catch (e) {
       debugPrint('❌ Error loading inspections: $e');
       setState(() {
-        _error = 'Ачаалах үед алдаа гарлаа: $e';
+        _error = ErrorHandler.handleApiError(e);
         _loading = false;
       });
     }
@@ -450,8 +465,9 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
 
     final hasDaily = _dailyItems.isNotEmpty;
     final hasScheduled = _scheduledItems.isNotEmpty;
+    final hasAssignment = _assignmentItems.isNotEmpty;
 
-    if (!hasDaily && !hasScheduled) {
+    if (!hasDaily && !hasScheduled && !hasAssignment) {
       return const Center(
         child: Text('Одоогоор үзлэг алга.'),
       );
@@ -488,6 +504,19 @@ class _InspectionGroupedListState extends State<InspectionGroupedList> {
                 onToggle: () {
                   setState(() {
                     _scheduledExpanded = !_scheduledExpanded;
+                  });
+                },
+              ),
+            // Томилолтын үзлэгүүд (MAINTENANCE)
+            if (hasAssignment)
+              _buildSection(
+                title: 'Томилолтын үзлэг',
+                items: _assignmentItems,
+                emptyMessage: 'Одоогоор томилолтын үзлэг алга.',
+                isExpanded: _assignmentExpanded,
+                onToggle: () {
+                  setState(() {
+                    _assignmentExpanded = !_assignmentExpanded;
                   });
                 },
               ),
