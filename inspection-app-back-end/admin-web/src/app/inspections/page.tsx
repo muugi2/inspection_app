@@ -37,12 +37,19 @@ interface Device {
   siteId?: string;
   contractId?: string;
   modelId?: string;
+  model?: {
+    id: string;
+    manufacturer: string;
+    model: string;
+    deviceType?: string;
+  };
 }
 
 interface Template {
   id: string;
   name: string;
   type: string;
+  deviceType?: string;
 }
 
 interface User {
@@ -69,6 +76,8 @@ interface Inspection {
   scheduleType?: string;
   title: string;
   scheduledAt?: string;
+  startedAt?: string;
+  completedAt?: string;
   status: string;
   assignedTo?: string;
   notes?: string;
@@ -93,6 +102,11 @@ interface Inspection {
     id: string;
     fullName: string;
   };
+  assignedUsers?: {
+    id: string;
+    fullName: string;
+    email: string;
+  }[];
   createdAt?: string;
 }
 
@@ -116,6 +130,8 @@ export default function InspectionsPage() {
   const [scheduleType, setScheduleType] = useState('SCHEDULED');
   const [title, setTitle] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
+  const [startedAt, setStartedAt] = useState('');
+  const [completedAt, setCompletedAt] = useState('');
   const [notes, setNotes] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('');
 
@@ -123,6 +139,7 @@ export default function InspectionsPage() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assigningInspection, setAssigningInspection] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState('');
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]); // Multiple users selection
   const [filterUserOrgId, setFilterUserOrgId] = useState(''); // Filter users by organization (optional)
 
   useEffect(() => {
@@ -143,6 +160,27 @@ export default function InspectionsPage() {
       setContracts([]);
     }
   }, [selectedOrg]);
+
+  // Auto-select template when device or type changes
+  useEffect(() => {
+    if (selectedDevice && selectedType && !editingId) {
+      const device = devices.find(d => d.id === selectedDevice);
+      const deviceType = device?.model?.deviceType;
+      
+      if (deviceType) {
+        // Find template matching device type and inspection type
+        const matchingTemplate = templates.find(
+          t => t.type === selectedType && 
+               (t.deviceType === deviceType || !t.deviceType) // Match deviceType or allow NULL templates
+        );
+        
+        if (matchingTemplate && !selectedTemplate) {
+          setSelectedTemplate(matchingTemplate.id);
+          console.log(`Auto-selected template: ${matchingTemplate.name} for device type: ${deviceType}`);
+        }
+      }
+    }
+  }, [selectedDevice, selectedType, devices, templates, selectedTemplate, editingId]);
 
   const fetchInspections = async () => {
     try {
@@ -218,6 +256,8 @@ export default function InspectionsPage() {
       setSelectedType(inspection.type);
       setScheduleType(inspection.scheduleType || 'SCHEDULED');
       setScheduledAt(inspection.scheduledAt ? inspection.scheduledAt.split('T')[0] : '');
+      setStartedAt(inspection.startedAt ? inspection.startedAt.split('T')[0] : '');
+      setCompletedAt(inspection.completedAt ? inspection.completedAt.split('T')[0] : '');
       setNotes(inspection.notes || '');
       setSelectedTemplate(inspection.templateId || '');
       setSelectedOrg(inspection.orgId);
@@ -241,6 +281,8 @@ export default function InspectionsPage() {
     setScheduleType('SCHEDULED');
     setTitle('');
     setScheduledAt('');
+    setStartedAt('');
+    setCompletedAt('');
     setNotes('');
     setSelectedTemplate('');
   };
@@ -257,6 +299,22 @@ export default function InspectionsPage() {
       console.error('❌ [Admin-web] Validation failed: Device or title missing');
       alert('Device and title are required');
       return;
+    }
+
+    // Validate startedAt and completedAt for DAILY inspections
+    if (scheduleType === 'DAILY') {
+      if (!startedAt || !completedAt) {
+        alert('Өдөр тутмын үзлэгийн хувьд эхлэх болон дуусах огноо заавал шаардлагатай');
+        return;
+      }
+      
+      const startDate = new Date(startedAt);
+      const endDate = new Date(completedAt);
+      
+      if (endDate < startDate) {
+        alert('Дуусах огноо эхлэх огнооноос өмнө байж болохгүй');
+        return;
+      }
     }
 
     console.log('✅ [Admin-web] Validation passed, preparing data...');
@@ -284,6 +342,8 @@ export default function InspectionsPage() {
         scheduleType: finalScheduleType, // Ensure this is always 'DAILY' or 'SCHEDULED'
         title,
         scheduledAt: scheduledAt || undefined,
+        startedAt: startedAt || undefined,
+        completedAt: completedAt || undefined,
         notes: notes || undefined,
         templateId: selectedTemplate || undefined,
       };
@@ -299,6 +359,8 @@ export default function InspectionsPage() {
         await apiService.inspections.update(editingId, {
           title: data.title,
           scheduledAt: data.scheduledAt,
+          startedAt: data.startedAt,
+          completedAt: data.completedAt,
           notes: data.notes,
           scheduleType: data.scheduleType, // scheduleType нэмэх
         });
@@ -335,8 +397,8 @@ export default function InspectionsPage() {
       
       alert(`✅ Амжилттай! ${repairsCreated} засвар үүсгэгдлээ.`);
       
-      // Navigate to repairs page
-      window.location.href = '/repairs';
+      // Refresh inspections list
+      await fetchInspections();
     } catch (error: any) {
       console.error('Failed to analyze repairs:', error);
       alert('❌ ' + (error.response?.data?.message || error.message || 'Засвар үүсгэхэд алдаа гарлаа'));
@@ -373,7 +435,15 @@ export default function InspectionsPage() {
   const handleOpenAssignModal = (inspectionId: string) => {
     setAssigningInspection(inspectionId);
     setSelectedUser('');
+    setSelectedUsers([]);
     setFilterUserOrgId(''); // Reset filter when opening modal
+    
+    // Pre-select already assigned users
+    const inspection = inspections.find(i => i.id === inspectionId);
+    if (inspection?.assignedUsers && inspection.assignedUsers.length > 0) {
+      setSelectedUsers(inspection.assignedUsers.map(u => u.id));
+    }
+    
     setShowAssignModal(true);
   };
 
@@ -381,20 +451,35 @@ export default function InspectionsPage() {
     setShowAssignModal(false);
     setAssigningInspection(null);
     setSelectedUser('');
+    setSelectedUsers([]);
+  };
+
+  const handleUserToggle = (userId: string) => {
+    setSelectedUsers(prev => {
+      if (prev.includes(userId)) {
+        return prev.filter(id => id !== userId);
+      } else {
+        return [...prev, userId];
+      }
+    });
   };
 
   const handleAssignSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedUser || !assigningInspection) {
-      alert('Please select a user');
+    // Support both single user (backward compatibility) and multiple users
+    const userIdsToAssign = selectedUsers.length > 0 ? selectedUsers : (selectedUser ? [selectedUser] : []);
+
+    if (userIdsToAssign.length === 0 || !assigningInspection) {
+      alert('Хамгийн багадаа 1 хүн сонгоно уу');
       return;
     }
 
     try {
       setLoading(true);
-      await apiService.inspections.assign(assigningInspection, selectedUser);
-      alert('✅ Үзлэг амжилттай томилогдлоо');
+      // Send array of userIds
+      await apiService.inspections.assign(assigningInspection, userIdsToAssign);
+      alert(`✅ Үзлэг ${userIdsToAssign.length} хүнд амжилттай томилогдлоо`);
       handleCloseAssignModal();
       fetchInspections();
     } catch (error: any) {
@@ -507,7 +592,19 @@ export default function InspectionsPage() {
                     : '-'}
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-900">
-                  {inspection.assignedUser?.fullName || '-'}
+                  {inspection.assignedUsers && inspection.assignedUsers.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {inspection.assignedUsers.map((user, idx) => (
+                        <span key={user.id} className="text-xs">
+                          {idx + 1}. {user.fullName}
+                        </span>
+                      ))}
+                    </div>
+                  ) : inspection.assignedUser?.fullName ? (
+                    inspection.assignedUser.fullName
+                  ) : (
+                    '-'
+                  )}
                 </td>
                 <td className="px-6 py-4 text-sm font-medium space-x-2">
                   <button
@@ -658,37 +755,41 @@ export default function InspectionsPage() {
                 />
               </div>
 
-              {/* Template */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Template
-                </label>
-                <select
-                  value={selectedTemplate}
-                  onChange={(e) => setSelectedTemplate(e.target.value)}
-                  className="w-full p-3 border rounded-lg"
-                  disabled={!!editingId}
-                >
-                  <option value="">Сонгох</option>
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Template - Hidden, auto-selected based on device type */}
+              {/* Template is automatically selected based on device type and inspection type */}
 
-              {/* Scheduled At */}
+              {/* Started At - Эхлэх огноо */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Хуваарь
+                  Эхлэх огноо <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="date"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
+                  value={startedAt}
+                  onChange={(e) => setStartedAt(e.target.value)}
                   className="w-full p-3 border rounded-lg"
+                  required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Өдөр тутмын үзлэгийн хувьд эхлэх огноо заавал шаардлагатай
+                </p>
+              </div>
+
+              {/* Completed At - Дуусах огноо */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Дуусах огноо <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={completedAt}
+                  onChange={(e) => setCompletedAt(e.target.value)}
+                  className="w-full p-3 border rounded-lg"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Өдөр тутмын үзлэгийн хувьд дуусах огноо заавал шаардлагатай
+                </p>
               </div>
 
               {/* Notes */}
@@ -769,46 +870,54 @@ export default function InspectionsPage() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Хэрэглэгч сонгох *
+                    Хэрэглэгч сонгох (олон сонгох боломжтой) *
                   </label>
-                <select
-                  value={selectedUser}
-                  onChange={(e) => setSelectedUser(e.target.value)}
-                  className="w-full p-3 border rounded-lg"
-                  required
-                >
-                  <option value="">Сонгох</option>
-                  {users
-                    .filter((user) => {
+                  <div className="border rounded-lg p-3 max-h-60 overflow-y-auto">
+                    {users
+                      .filter((user) => {
+                        if (!user) return false;
+                        // Filter by role
+                        if (user?.role?.toLowerCase() !== 'inspector') return false;
+                        
+                        // Filter by organization if selected
+                        if (filterUserOrgId) {
+                          return user?.organization?.id === filterUserOrgId || user?.orgId === filterUserOrgId;
+                        }
+                        return true;
+                      })
+                      .map((user) => (
+                        <div key={user?.id} className="flex items-center space-x-2 py-2">
+                          <input
+                            type="checkbox"
+                            id={`user-${user?.id}`}
+                            checked={selectedUsers.includes(user?.id || '')}
+                            onChange={() => handleUserToggle(user?.id || '')}
+                            className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                          />
+                          <label htmlFor={`user-${user?.id}`} className="text-sm text-gray-700 cursor-pointer">
+                            {user?.fullName || 'N/A'} - {user?.organization?.name || 'N/A'} ({user?.role || 'N/A'})
+                          </label>
+                        </div>
+                      ))}
+                    {users.filter((user) => {
                       if (!user) return false;
-                      // Filter by role
                       if (user?.role?.toLowerCase() !== 'inspector') return false;
-                      
-                      // Filter by organization if selected
                       if (filterUserOrgId) {
                         return user?.organization?.id === filterUserOrgId || user?.orgId === filterUserOrgId;
                       }
                       return true;
-                    })
-                    .map((user) => (
-                      <option key={user?.id} value={user?.id}>
-                        {user?.fullName || 'N/A'} - {user?.organization?.name || 'N/A'} ({user?.role || 'N/A'})
-                      </option>
-                    ))}
-                </select>
-                {users.filter((user) => {
-                  if (!user) return false;
-                  if (user?.role?.toLowerCase() !== 'inspector') return false;
-                  if (filterUserOrgId) {
-                    return user?.organization?.id === filterUserOrgId || user?.orgId === filterUserOrgId;
-                  }
-                  return true;
-                }).length === 0 && (
-                  <p className="text-sm text-red-600 mt-2">
-                    Inspector хэрэглэгч олдсонгүй. Эхлээд inspector үүсгэнэ үү.
-                  </p>
-                )}
-              </div>
+                    }).length === 0 && (
+                      <p className="text-sm text-red-600 mt-2">
+                        Inspector хэрэглэгч олдсонгүй. Эхлээд inspector үүсгэнэ үү.
+                      </p>
+                    )}
+                  </div>
+                  {selectedUsers.length > 0 && (
+                    <p className="text-sm text-gray-600 mt-2">
+                      {selectedUsers.length} хүн сонгогдсон
+                    </p>
+                  )}
+                </div>
 
               <div className="flex gap-3 pt-4">
                 <button

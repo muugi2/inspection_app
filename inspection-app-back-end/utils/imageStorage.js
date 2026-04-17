@@ -5,7 +5,7 @@ const DEFAULT_STORAGE_PATH =
   process.env.FTP_STORAGE_PATH || path.resolve('C:/ftp_data');
 const DEFAULT_PUBLIC_BASE_URL =
   process.env.FTP_PUBLIC_BASE_URL ||
-  'http://192.168.1.71:4555/uploads';
+  'http://192.168.1.35:4555/uploads';
 const FTP_REMOTE_PREFIX = (process.env.FTP_REMOTE_PREFIX || 'test')
   .trim()
   .replace(/^\/+|\/+$/g, '');
@@ -69,9 +69,15 @@ function resolveLocalPath(relativePath) {
     return null;
   }
 
-  const sanitized = stripRemotePrefix(normalized);
+  let sanitized = stripRemotePrefix(normalized);
   if (!sanitized) {
     return null;
+  }
+
+  // FTP_STORAGE_PATH ихэвчлэн uploads хавтас руу заадаг (/app/uploads). DB-д "uploads/xxx" гэж хадгалагдсан бол
+  // base + "uploads/xxx" = .../uploads/uploads/xxx болж давхардана. Тиймээс "uploads/" префиксийг нэг удаа хасана.
+  if (sanitized.toLowerCase().startsWith('uploads/')) {
+    sanitized = sanitized.slice(8); // "uploads/".length
   }
 
   const base = path.resolve(DEFAULT_STORAGE_PATH);
@@ -116,6 +122,30 @@ function buildPublicUrl(relativePath) {
   return `${base}/${sanitized}`;
 }
 
+/**
+ * Локал файл олдохгүй бол FTP_PUBLIC_BASE_URL (HTTP) -аас татах fallback.
+ * Зургийн URL нь ихэвчлен .../uploads/filename.jpg тул path-ийн сүүлийн сегментийг ашиглана.
+ */
+async function fetchImageFromPublicUrl(relativePath) {
+  const base = (DEFAULT_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+  if (!base) return null;
+  const pathPart = relativePath.replace(/^uploads\/?/, '').trim() || relativePath;
+  const url = `${base}/${pathPart}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
+    if (!fileBuffer || fileBuffer.length === 0) return null;
+    const base64String = fileBuffer.toString('base64');
+    console.log(`[imageStorage] ✅ Fetched from URL: ${url} (${fileBuffer.length} bytes)`);
+    return { base64: base64String, buffer: fileBuffer, size: fileBuffer.length, localPath: null };
+  } catch (err) {
+    console.warn(`[imageStorage] ⚠️ HTTP fetch failed for ${url}:`, err.message);
+    return null;
+  }
+}
+
 async function loadImagePayload(relativePath) {
   console.log(`[imageStorage] loadImagePayload called with: ${relativePath}`);
   
@@ -139,6 +169,8 @@ async function loadImagePayload(relativePath) {
         `[imageStorage] ❌ File does not exist: ${localPath}`,
         accessError.message
       );
+      const fromUrl = await fetchImageFromPublicUrl(relativePath);
+      if (fromUrl) return fromUrl;
       return {
         base64: null,
         buffer: null,

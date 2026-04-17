@@ -23,7 +23,8 @@
     "test:auth:simple": "node scripts/test-auth-simple.js",
     "test:auth:complete": "node scripts/test-complete-auth.js",
     "start:auth": "node start-auth-system.js",
-    "db:init": "node scripts/init-db.js"
+    "db:init": "node scripts/init-db.js",
+    "verify:inspection": "node scripts/verify-inspection-data.js"
   },
   "keywords": [
     "express",
@@ -52,7 +53,9 @@
     "multer": "^2.0.2",
     "mysql2": "^3.14.3",
     "nodemailer": "^7.0.10",
+    "pdfkit": "^0.17.2",
     "pizzip": "^3.2.0",
+    "puppeteer": "^24.37.2",
     "sharp": "^0.34.5"
   },
   "devDependencies": {

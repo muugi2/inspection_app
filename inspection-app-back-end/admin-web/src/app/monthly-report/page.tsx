@@ -5,26 +5,32 @@ import { useRouter } from 'next/navigation';
 import { authUtils, User } from '@/lib/auth';
 import { apiService } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
+import fileDownload from 'js-file-download';
 
-interface Site {
+
+interface Organization {
   id: string;
   name: string;
-  organization: {
-    id: string;
-    name: string;
-  };
+  code: string;
 }
 
 export default function MonthlyReportPage() {
   const [user, setUser] = useState<User | null>(null);
-  const [sites, setSites] = useState<Site[]>([]);
-  const [selectedSiteId, setSelectedSiteId] = useState<string>('');
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedStartDay, setSelectedStartDay] = useState<number>(1);
+  const [selectedEndDay, setSelectedEndDay] = useState<number>(new Date().getDate());
   const [isLoading, setIsLoading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
+
+  const getDaysInMonth = (year: number, month: number) => new Date(year, month, 0).getDate();
+  const daysInSelectedMonth = getDaysInMonth(selectedYear, selectedMonth);
+  const dayOptions = Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1);
 
   useEffect(() => {
     const initializePage = async () => {
@@ -54,34 +60,40 @@ export default function MonthlyReportPage() {
         return;
       }
 
-      await loadSites();
+      await loadOrganizations();
     };
 
     initializePage();
   }, [router]);
 
-  const loadSites = async () => {
+  useEffect(() => {
+    setSelectedStartDay((prev) => Math.min(Math.max(prev, 1), daysInSelectedMonth));
+    setSelectedEndDay((prev) => Math.min(Math.max(prev, 1), daysInSelectedMonth));
+  }, [daysInSelectedMonth]);
+
+
+  const loadOrganizations = async () => {
     try {
       setIsLoading(true);
-      const response = await apiService.sites.getAll();
-      const sitesData: Site[] = Array.isArray(response?.data) ? response.data : Array.isArray(response) ? response : [];
-      setSites(sitesData);
-      
-      // Auto-select first site if available
-      if (sitesData.length > 0 && !selectedSiteId) {
-        setSelectedSiteId(sitesData[0].id);
-      }
+      const response = await apiService.organizations.getAll();
+      const orgsData: Organization[] = Array.isArray(response?.data) ? response.data : Array.isArray(response) ? response : [];
+      setOrganizations(orgsData);
     } catch (err: any) {
-      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Талбайг ачаалахад алдаа гарлаа';
+      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Байгууллагуудыг ачаалахад алдаа гарлаа';
       setError(message);
     } finally {
       setIsLoading(false);
     }
   };
 
+
   const handleDownload = async () => {
-    if (!selectedSiteId) {
-      setError('Талбай сонгоно уу');
+    if (!selectedOrgId) {
+      setError('Байгууллага сонгоно уу');
+      return;
+    }
+    if (selectedStartDay > selectedEndDay) {
+      setError('Эхлэх өдөр дуусах өдрөөс их байж болохгүй');
       return;
     }
 
@@ -89,26 +101,74 @@ export default function MonthlyReportPage() {
       setIsDownloading(true);
       setError('');
 
-      const blob = await apiService.reports.downloadMonthlyReport(
-        selectedSiteId,
+      console.log('Starting download...', {
+        selectedOrgId,
         selectedYear,
-        selectedMonth
+        selectedMonth,
+        selectedStartDay,
+        selectedEndDay,
+      });
+
+      const blob = await apiService.reports.downloadMonthlyReport(
+        selectedOrgId,
+        selectedYear,
+        selectedMonth,
+        selectedStartDay,
+        selectedEndDay
       );
 
-      // Create download link
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `monthly-report-${selectedSiteId}-${selectedYear}-${selectedMonth}.docx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      // Debug: Log blob type
+      console.log('Downloaded blob type:', blob instanceof Blob ? blob.type : typeof blob);
+      console.log('Blob size:', blob instanceof Blob ? blob.size : 'unknown');
+
+      if (!(blob instanceof Blob)) {
+        throw new Error('Invalid response: expected Blob');
+      }
+
+      if (blob.size === 0) {
+        throw new Error('Empty PDF file received');
+      }
+
+      // Use fileDownload utility for consistent behavior
+      const filename = `monthly-report-${selectedOrgId}-${selectedYear}-${selectedMonth}-${selectedStartDay}-${selectedEndDay}.pdf`;
+      fileDownload(blob, filename);
+      
+      console.log('Download completed successfully');
     } catch (err: any) {
+      console.error('Download error:', err);
       const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Тайлан татахад алдаа гарлаа';
       setError(message);
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!selectedOrgId) {
+      setError('Байгууллага сонгоно уу');
+      return;
+    }
+    if (selectedStartDay > selectedEndDay) {
+      setError('Эхлэх өдөр дуусах өдрөөс их байж болохгүй');
+      return;
+    }
+
+    try {
+      setIsSending(true);
+      setError('');
+      await apiService.reports.sendMonthlyReportEmail(
+        selectedOrgId,
+        selectedYear,
+        selectedMonth,
+        selectedStartDay,
+        selectedEndDay
+      );
+      alert('Сарын тайланг байгууллагын хариуцсан хүн рүү амжилттай илгээлээ.');
+    } catch (err: any) {
+      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Тайлан илгээхэд алдаа гарлаа';
+      setError(message);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -151,7 +211,7 @@ export default function MonthlyReportPage() {
         <header className="bg-white shadow-sm">
           <div className="px-6 py-4">
             <h1 className="text-xl font-bold text-gray-900">1 сарын тайлан</h1>
-            <p className="text-sm text-gray-500">Тухайн сард хийгдсэн бүх үзлэгүүдийн тайланг татах</p>
+            <p className="text-sm text-gray-500">Байгууллага, жил, сар болон өдрийн хүрээгээр үзлэгийн тайлан татах</p>
           </div>
         </header>
 
@@ -166,21 +226,22 @@ export default function MonthlyReportPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Талбай
+                  Байгууллага
                 </label>
                 <select
-                  value={selectedSiteId}
-                  onChange={(e) => setSelectedSiteId(e.target.value)}
+                  value={selectedOrgId}
+                  onChange={(e) => setSelectedOrgId(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 >
-                  <option value="">Талбай сонгох</option>
-                  {sites.map((site) => (
-                    <option key={site.id} value={site.id}>
-                      {site.name} ({site.organization.name})
+                  <option value="">Байгууллага сонгох</option>
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name} ({org.code})
                     </option>
                   ))}
                 </select>
               </div>
+
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -218,28 +279,82 @@ export default function MonthlyReportPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Эхлэх өдөр
+                  </label>
+                  <select
+                    value={selectedStartDay}
+                    onChange={(e) => setSelectedStartDay(parseInt(e.target.value))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    {dayOptions.map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Дуусах өдөр
+                  </label>
+                  <select
+                    value={selectedEndDay}
+                    onChange={(e) => setSelectedEndDay(parseInt(e.target.value))}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    {dayOptions.map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                {selectedYear} оны {selectedMonth}-{selectedStartDay} -ээс {selectedMonth}-{selectedEndDay} хүртэлх (эхлэх ба дуусах өдрийг хамруулсан) үзлэгүүд орно.
+              </p>
+
               <div className="pt-4">
-                <button
-                  onClick={handleDownload}
-                  disabled={!selectedSiteId || isDownloading}
-                  className={`w-full px-6 py-3 rounded-lg font-medium transition-colors ${
-                    !selectedSiteId || isDownloading
-                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
-                  }`}
-                >
-                  {isDownloading ? (
-                    <span className="flex items-center justify-center">
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Татаж байна...
-                    </span>
-                  ) : (
-                    '📥 Тайлан татах (.docx)'
-                  )}
-                </button>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <button
+                    onClick={handleDownload}
+                    disabled={!selectedOrgId || isDownloading || isSending}
+                    className={`w-full px-6 py-3 rounded-lg font-medium transition-colors ${
+                      !selectedOrgId || isDownloading || isSending
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                    }`}
+                  >
+                    {isDownloading ? (
+                      <span className="flex items-center justify-center">
+                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Татаж байна...
+                      </span>
+                    ) : (
+                      '📥 Тайлан татах (.pdf)'
+                    )}
+                  </button>
+
+                  <button
+                    onClick={handleSendEmail}
+                    disabled={!selectedOrgId || isSending || isDownloading}
+                    className={`w-full px-6 py-3 rounded-lg font-medium transition-colors ${
+                      !selectedOrgId || isSending || isDownloading
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                  >
+                    {isSending ? 'Илгээж байна...' : '✉️ Хариуцсан хүн рүү шууд илгээх'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -50,6 +50,10 @@ const getTransporter = () => {
       },
       debug: true, // Enable debug logging
       logger: true, // Enable logger
+      // Том PDF хавсралттай mail: SMTP руу илгээхэд удаан болж чадна
+      connectionTimeout: 120000,
+      greetingTimeout: 120000,
+      socketTimeout: 300000,
     };
 
     // For Microsoft 365 with port 587, use STARTTLS (secure: false, requireTLS: true)
@@ -115,6 +119,7 @@ const sendInspectionCompletionEmail = async ({
   completedAt,
   contactName,
   docxBuffer,
+  pdfBuffer,
 }) => {
   console.log('[email-service] sendInspectionCompletionEmail called:', {
     to,
@@ -123,6 +128,8 @@ const sendInspectionCompletionEmail = async ({
     inspectionId,
     completedAt,
     contactName,
+    hasPdf: !!pdfBuffer,
+    hasDocx: !!docxBuffer,
   });
 
   const mailer = getTransporter();
@@ -275,6 +282,7 @@ Inspection App Систем
       host: process.env.NOTIFY_EMAIL_HOST,
       port: process.env.NOTIFY_EMAIL_PORT,
       secure: process.env.NOTIFY_EMAIL_SECURE,
+      hasPdfAttachment: !!pdfBuffer,
       hasDocxAttachment: !!docxBuffer,
     });
     
@@ -286,17 +294,25 @@ Inspection App Систем
       html,
     };
 
-    // Attach .docx file if provided
+    const attachments = [];
+    if (pdfBuffer) {
+      attachments.push({
+        filename: `inspection-${inspectionId}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      });
+      console.log(`[email-service] Attaching .pdf file: inspection-${inspectionId}.pdf (${pdfBuffer.length} bytes)`);
+    }
     if (docxBuffer) {
-      const filename = `inspection-${inspectionId}.docx`;
-      mailOptions.attachments = [
-        {
-          filename,
-          content: docxBuffer,
-          contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        },
-      ];
-      console.log(`[email-service] Attaching .docx file: ${filename} (${docxBuffer.length} bytes)`);
+      attachments.push({
+        filename: `inspection-${inspectionId}.docx`,
+        content: docxBuffer,
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+      console.log(`[email-service] Attaching .docx file: inspection-${inspectionId}.docx (${docxBuffer.length} bytes)`);
+    }
+    if (attachments.length) {
+      mailOptions.attachments = attachments;
     }
     
     const result = await mailer.sendMail(mailOptions);
@@ -357,9 +373,82 @@ Inspection App Систем
   }
 };
 
+const sendMonthlyReportEmail = async ({
+  to,
+  organizationName,
+  contactName,
+  year,
+  month,
+  startDay,
+  endDay,
+  pdfBuffer,
+}) => {
+  const mailer = getTransporter();
+  if (!mailer) return;
+
+  const from =
+    process.env.NOTIFY_EMAIL_FROM || process.env.NOTIFY_EMAIL_USER || '';
+
+  if (!to) {
+    console.warn('[email-service] No recipient supplied for monthly report email.');
+    return;
+  }
+
+  const safeStartDay = Number(startDay) || 1;
+  const safeEndDay = Number(endDay) || safeStartDay;
+  const greeting = contactName ? `Эрхэм ${contactName},` : 'Эрхэм хэрэглэгч,';
+  const reportPeriod = `${year} оны ${month}-${safeStartDay} нээс ${month}-${safeEndDay} ны хооронд`;
+  const subject = `${organizationName || 'Байгууллага'} - ${reportPeriod} үзлэгийн тайлан`;
+
+  const text = `
+${greeting}
+
+${organizationName || 'Байгууллага'}-ын үзлэгийн тайланг хавсаргав.
+
+Тайлангийн хугацаа: ${reportPeriod}
+
+Хүндэтгэсэн,
+Inspection App Систем
+  `.trim();
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #222;">
+  <p>${greeting}</p>
+  <p><strong>${organizationName || 'Байгууллага'}</strong>-ын үзлэгийн тайланг хавсаргав.</p>
+  <p><strong>Тайлангийн хугацаа:</strong> ${reportPeriod}</p>
+  <p>Хүндэтгэсэн,<br/>Inspection App Систем</p>
+</body>
+</html>
+  `.trim();
+
+  const filename = `monthly-report-${organizationName || 'org'}-${year}-${month}-${safeStartDay}-${safeEndDay}.pdf`;
+
+  await mailer.sendMail({
+    from,
+    to,
+    subject,
+    text,
+    html,
+    attachments: pdfBuffer
+      ? [
+          {
+            filename,
+            content: pdfBuffer,
+            contentType: 'application/pdf',
+          },
+        ]
+      : [],
+  });
+  console.log(`[email-service] ✅ Monthly report email sent to ${to}`);
+};
+
 module.exports = {
   sendInspectionAssignmentEmail,
   sendInspectionCompletionEmail,
+  sendMonthlyReportEmail,
 };
 
 

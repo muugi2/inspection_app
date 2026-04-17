@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { authUtils } from '@/lib/auth';
 import type { ComponentType } from 'react';
@@ -87,7 +87,7 @@ const ReportsIcon = ({ className = '' }: IconProps) => (
   </svg>
 );
 
-const MonthlyReportIcon = ({ className = '' }: IconProps) => (
+const RegisterIcon = ({ className = '' }: IconProps) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
@@ -97,8 +97,35 @@ const MonthlyReportIcon = ({ className = '' }: IconProps) => (
     strokeLinejoin="round"
     className={`w-5 h-5 ${className}`}
   >
-    <rect x="3" y="4" width="18" height="18" rx="2" />
-    <path d="M3 10h18M8 2v4M16 2v4M3 18h18" />
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </svg>
+);
+
+const ActivityIcon = ({ className = '' }: IconProps) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`w-5 h-5 ${className}`}
+  >
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+  </svg>
+);
+
+const ChevronDownIcon = ({ className = '' }: IconProps) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`w-4 h-4 transition-transform duration-200 ${className}`}
+  >
+    <path d="M6 9l6 6 6-6" />
   </svg>
 );
 
@@ -106,6 +133,13 @@ type MenuItem = {
   name: string;
   path: string;
   icon: ComponentType<IconProps>;
+};
+
+type MenuGroup = {
+  name: string;
+  icon: ComponentType<IconProps>;
+  items: MenuItem[];
+  defaultOpen?: boolean;
 };
 
 interface SidebarProps {
@@ -123,6 +157,92 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
   const pathname = usePathname();
   const [currentUser, setCurrentUser] = useState<SidebarProps['currentUser']>(null);
   const [mounted, setMounted] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    'Тайлан': true,
+    'Хэрэглэгч удирдах': true,
+    'Бүртгэл': false,
+    'Үйл ажиллагаа': false,
+  });
+
+  const menuGroups: MenuGroup[] = useMemo(() => [
+    {
+      name: 'Тайлан',
+      icon: ReportsIcon,
+      items: [
+        {
+          name: 'Үзлэгийн тайлан',
+          path: '/inspection-answers',
+          icon: AnswersIcon,
+        },
+        {
+          name: 'Засварын тайлан',
+          path: '/repair-answers',
+          icon: AnswersIcon,
+        },
+        {
+          name: 'Суурьлуулалтын тайлан',
+          path: '/installation-report',
+          icon: ReportsIcon,
+        },
+      ],
+      defaultOpen: false,
+    },
+    {
+      name: 'Хэрэглэгч удирдах',
+      icon: UsersIcon,
+      items: [
+        {
+          name: 'Үзлэг томилох',
+          path: '/assign-inspection',
+          icon: AssignIcon,
+        },
+        {
+          name: 'Засвар томилох',
+          path: '/assign-repair',
+          icon: AssignIcon,
+        },
+        {
+          name: 'Суурьлуулалт томилох',
+          path: '/assign-installation',
+          icon: AssignIcon,
+        },
+        {
+          name: 'Баталгаажуулалт томилох',
+          path: '/assign-verification',
+          icon: AssignIcon,
+        },
+        {
+          name: 'Хэрэглэгч удирдах',
+          path: '/users',
+          icon: UsersIcon,
+        },
+      ],
+      defaultOpen: true,
+    },
+    {
+      name: 'Бүртгэл',
+      icon: RegisterIcon,
+      items: [],
+      defaultOpen: false,
+    },
+    {
+      name: 'Үйл ажиллагаа',
+      icon: ActivityIcon,
+      items: [
+        {
+          name: 'Dashboard',
+          path: '/dashboard',
+          icon: DashboardIcon,
+        },
+        {
+          name: '1 сарын тайлан',
+          path: '/monthly-report',
+          icon: ReportsIcon,
+        },
+      ],
+      defaultOpen: false,
+    },
+  ], []);
 
   // Only get user on client side to avoid hydration mismatch
   useEffect(() => {
@@ -130,48 +250,36 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
     // Use prop if provided, otherwise get from authUtils
     const user = propCurrentUser || authUtils.getUser();
     setCurrentUser(user);
-  }, [propCurrentUser]);
+
+    // Auto-open groups if current path matches any item in the group
+    const newOpenGroups: Record<string, boolean> = {};
+    menuGroups.forEach((group) => {
+      const hasActiveItem = group.items.some((item) => {
+        if (item.path === '/organizations') {
+          const reportPaths = ['/organizations', '/sites', '/contracts', '/device-models', '/devices', '/inspections'];
+          return reportPaths.some(reportPath => pathname === reportPath);
+        }
+        return pathname === item.path;
+      });
+      newOpenGroups[group.name] = hasActiveItem || group.defaultOpen || false;
+    });
+    setOpenGroups(newOpenGroups);
+  }, [propCurrentUser, pathname]);
 
   const handleLogout = () => {
     authUtils.logout();
     router.push('/login');
   };
 
-  const menuItems: MenuItem[] = [
-    {
-      name: 'Үзлэгийн тайлан',
-      path: '/inspection-answers',
-      icon: AnswersIcon,
-    },
-    {
-      name: 'Dashboard',
-      path: '/dashboard',
-      icon: DashboardIcon,
-    },
-    {
-      name: 'Үзлэг томилох',
-      path: '/assign-inspection',
-      icon: AssignIcon,
-    },
-    {
-      name: 'Хэрэглэгч удирдах',
-      path: '/users',
-      icon: UsersIcon,
-    },
-    {
-      name: 'Тайлан',
-      path: '/organizations', // Default to first report page
-      icon: ReportsIcon,
-    },
-    {
-      name: '1 сарын тайлан',
-      path: '/monthly-report',
-      icon: MonthlyReportIcon,
-    },
-  ];
+  const toggleGroup = (groupName: string) => {
+    setOpenGroups((prev) => ({
+      ...prev,
+      [groupName]: !prev[groupName],
+    }));
+  };
 
   const isActive = (path: string) => {
-    // For "Тайлан", check if any report page is active
+    // For "Бүртгэл" group items
     if (path === '/organizations') {
       const reportPaths = ['/organizations', '/sites', '/contracts', '/device-models', '/devices', '/inspections'];
       return reportPaths.some(reportPath => pathname === reportPath);
@@ -201,28 +309,93 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
       {/* Menu Items */}
       <nav className="flex-1 p-3 overflow-y-auto">
         <div className="space-y-1">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.path);
+          {menuGroups.map((group) => {
+            const GroupIcon = group.icon;
+            const isOpen = openGroups[group.name] || false;
+            const hasActiveItem = group.items.some((item) => isActive(item.path));
+
             return (
+              <div key={group.name} className="mb-2">
+                {/* Group Header - Compact style */}
+                <button
+                  onClick={() => {
+                    if (group.items.length > 0) {
+                      toggleGroup(group.name);
+                    } else if (group.name === 'Бүртгэл') {
+                      // If "Бүртгэл" group has no items, navigate to organizations
+                      router.push('/organizations');
+                    }
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm font-semibold transition-colors ${
+                    hasActiveItem || (group.name === 'Бүртгэл' && pathname === '/organizations')
+                      ? 'bg-gray-300 text-gray-900'
+                      : 'text-gray-700 hover:bg-gray-200 hover:text-gray-900'
+                  } cursor-pointer`}
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <GroupIcon
+                      className={`flex-shrink-0 ${
+                        hasActiveItem || (group.name === 'Бүртгэл' && pathname === '/organizations')
+                          ? 'text-gray-900'
+                          : 'text-gray-600'
+                      }`}
+                    />
+                    <span className="truncate">{group.name}</span>
+                  </div>
+                  {group.items.length > 0 && (
+                    <ChevronDownIcon
+                      className={`flex-shrink-0 transition-transform duration-200 ${
+                        isOpen ? 'rotate-0' : '-rotate-90'
+                      } ${hasActiveItem ? 'text-gray-900' : 'text-gray-500'}`}
+                    />
+                  )}
+                </button>
+
+                {/* Group Items - Indented with visual connection */}
+                {isOpen && (
+                  <div className="mt-1 ml-6 space-y-0.5">
+                    {group.items.map((item, index) => {
+                      const Icon = item.icon;
+                      const active = isActive(item.path);
+                      const isLast = index === group.items.length - 1;
+                      
+                      return (
+                        <div key={item.path} className="relative">
+                          {/* Vertical line connector */}
+                          {!isLast && (
+                            <div className="absolute left-2 top-6 bottom-0 w-px bg-gray-300"></div>
+                          )}
+                          {/* Horizontal line connector */}
+                          <div className="absolute left-2 top-3 w-3 h-px bg-gray-300"></div>
+                          
               <button
-                key={item.path}
                 onClick={() => router.push(item.path)}
-                className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                            className={`relative w-full flex items-center gap-2 pl-6 pr-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   active
                     ? 'bg-gray-300 text-gray-900'
                     : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
                 }`}
               >
+                            {/* Dot indicator */}
+                            <div className={`absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full ${
+                              active ? 'bg-gray-900' : 'bg-gray-400'
+                            }`}></div>
+                            
                 <Icon
-                  className={
+                              className={`flex-shrink-0 ${
                     active
                       ? 'text-gray-900'
-                      : 'text-gray-500 group-hover:text-gray-900'
-                  }
+                                  : 'text-gray-500'
+                              }`}
                 />
-                <span>{item.name}</span>
+                            <span className="truncate">{item.name}</span>
               </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -232,7 +405,7 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
       <div className="p-3 border-t border-gray-200">
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
         >
           <span className="text-lg">🚪</span>
           <span>Гарах</span>

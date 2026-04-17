@@ -5,10 +5,39 @@ const {
   buildPublicUrl,
 } = require('../utils/imageStorage');
 
+/**
+ * Convert status value to display text for template
+ * @param {string} status - Original status value
+ * @returns {string} - Display text for template
+ */
+function formatStatusForTemplate(status) {
+  if (!status) return '';
+  
+  const normalized = status.trim().toLowerCase();
+  
+  // Handle "+" symbol and "normal" status
+  if (status === '+' || normalized === 'normal' || normalized === 'хэвийн' || normalized === 'цэвэр') {
+    return 'Хэвийн';
+  }
+  
+  // Handle "improve" or "сайжруулах" status
+  if (normalized.includes('сайжруулах') || normalized.includes('improve') || normalized.includes('цэвэрлэх шаардлагатай')) {
+    return 'Сайжруулах шаардлагатай';
+  }
+  
+  // Handle "replace" or "солих" status
+  if (normalized.includes('солих') || normalized.includes('replace')) {
+    return 'Солих шаардлагатай';
+  }
+  
+  // Return original status if no match
+  return status;
+}
+
 function safeField(section = {}, key) {
   const item = section?.[key] || {};
   return {
-    status: item.status || '',
+    status: formatStatusForTemplate(item.status || ''),
     comment: item.comment || '',
     question: item.question || '',
   };
@@ -31,106 +60,91 @@ function extractSignatureImage(signatureValue) {
 }
 
 async function loadImagesForAnswer(prisma, answerId) {
-  const rows = await prisma.$queryRaw`
-    SELECT
-      id,
-      field_id,
-      section,
-      image_order,
-      image_url,
-      uploaded_at
-    FROM inspection_question_images
-    WHERE answer_id = ${answerId}
-    ORDER BY section, field_id, image_order;
-  `;
+  try {
+    // Check if table exists first
+    const tableCheck = await prisma.$queryRaw`
+      SELECT COUNT(*) as count 
+      FROM information_schema.tables 
+      WHERE table_schema = DATABASE() 
+      AND table_name = 'inspection_question_images'
+    `;
+    const tableExists = tableCheck[0]?.count > 0;
 
-  const images = [];
-  console.log(`[report-service] Loading ${rows.length} images for answer ${answerId}`);
-  
-  for (const row of rows) {
-    console.log(`[report-service] Processing image:`, {
-      id: row.id?.toString(),
-      image_url: row.image_url,
-      section: row.section,
-      field_id: row.field_id,
-      image_order: row.image_order,
-    });
-
-    const normalizedPath = normalizeRelativePath(row.image_url);
-    console.log(`[report-service] Normalized path: ${normalizedPath} (from: ${row.image_url})`);
-
-    if (!normalizedPath) {
-      console.warn(`[report-service] ❌ Failed to normalize path: ${row.image_url}`);
-      continue;
+    if (!tableExists) {
+      console.warn('[report-service] ⚠️ inspection_question_images table does not exist. Returning empty images array.');
+      return [];
     }
 
-    const payload = await loadImagePayload(normalizedPath);
-    console.log(`[report-service] Image payload loaded:`, {
-      hasBuffer: !!payload.buffer,
-      bufferLength: payload.buffer?.length,
-      hasBase64: !!payload.base64,
-      base64Length: payload.base64?.length,
-      size: payload.size,
-      localPath: payload.localPath,
-      error: payload.error,
-    });
+    const rows = await prisma.$queryRaw`
+      SELECT
+        id,
+        field_id,
+        section,
+        image_order,
+        image_url,
+        uploaded_at
+      FROM inspection_question_images
+      WHERE answer_id = ${answerId}
+      ORDER BY section, field_id, image_order;
+    `;
 
-    if (!payload.buffer && !payload.base64) {
-      console.error(
-        `[report-service] ❌ Failed to load image payload for: ${normalizedPath}`,
-        {
-          error: payload.error,
-          localPath: payload.localPath,
-        }
-      );
-      // Continue anyway - will create image object without image data
+    const images = [];
+    
+    for (const row of rows) {
+      const normalizedPath = normalizeRelativePath(row.image_url);
+
+      if (!normalizedPath) {
+        console.warn(`[report-service] ❌ Failed to normalize path: ${row.image_url}`);
+        continue;
+      }
+
+      const payload = await loadImagePayload(normalizedPath);
+
+      if (!payload.buffer && !payload.base64) {
+        console.error(
+          `[report-service] ❌ Failed to load image payload for: ${normalizedPath}`,
+          {
+            error: payload.error,
+            localPath: payload.localPath,
+          }
+        );
+        // Continue anyway - will create image object without image data
+      }
+
+      const mimeType = inferMimeType(normalizedPath);
+
+      const imageObj = {
+        id: row.id?.toString() || null,
+        section: row.section || null,
+        fieldId: row.field_id || null,
+        order: Number(row.image_order) || 0,
+        imageUrl: buildPublicUrl(normalizedPath),
+        storagePath: normalizedPath,
+        // Prefer binary buffer for DOCX generation; keep base64 for APIs that still use it
+        buffer: payload.buffer || null,
+        base64: payload.base64 || null,
+        mimeType,
+        uploadedAt: row.uploaded_at || null,
+      };
+
+      images.push(imageObj);
     }
-
-    const mimeType = inferMimeType(normalizedPath);
-    console.log(`[report-service] Inferred MIME type: ${mimeType} (from: ${normalizedPath})`);
-
-    const imageObj = {
-      id: row.id?.toString() || null,
-      section: row.section || null,
-      fieldId: row.field_id || null,
-      order: Number(row.image_order) || 0,
-      imageUrl: buildPublicUrl(normalizedPath),
-      storagePath: normalizedPath,
-      // Prefer binary buffer for DOCX generation; keep base64 for APIs that still use it
-      buffer: payload.buffer || null,
-      base64: payload.base64 || null,
-      mimeType,
-      uploadedAt: row.uploaded_at || null,
-    };
-
-    console.log(`[report-service] Created image object:`, {
-      id: imageObj.id,
-      section: imageObj.section,
-      fieldId: imageObj.fieldId,
-      hasBuffer: !!imageObj.buffer,
-      hasBase64: !!imageObj.base64,
-      mimeType: imageObj.mimeType,
+    return images;
+  } catch (error) {
+    console.error('[report-service] ❌ Error loading images for answer:', error.message);
+    console.error('[report-service] Error details:', {
+      code: error.code,
+      message: error.message,
+      answerId: answerId?.toString(),
     });
-
-    images.push(imageObj);
+    // Return empty array if table doesn't exist or other error occurs
+    return [];
   }
-
-  console.log(
-    `[report-service] ✅ Loaded ${images.length} images (${images.filter(img => img.buffer).length} with buffer, ${images.filter(img => img.base64).length} with base64)`
-  );
-  return images;
 }
 
 function mapIndicatorSection(section = {}) {
   // Template-defined fields for indicator section
-  const allowedFields = ['led_display', 'power_plug', 'seal_bolt', 'buttons', 'junction_wiring', 'serial_converter', 'battery'];
-  
-  // Debug: Check serial_converter data
-  console.log('[report-service] mapIndicatorSection - serial_converter data:', {
-    hasSerialConverter: !!section.serial_converter,
-    serialConverterValue: section.serial_converter,
-    sectionKeys: Object.keys(section),
-  });
+  const allowedFields = ['led_display', 'power_plug', 'seal_bolt', 'buttons', 'junction_wiring', 'serial_converter', 'control_screen', 'battery'];
   
   const mapped = {};
   allowedFields.forEach(field => {
@@ -142,14 +156,14 @@ function mapIndicatorSection(section = {}) {
       mapped['serial_converter'] = serialConverterData;
       // Also add serial_converter_plug for frontend display compatibility
       mapped['serial_converter_plug'] = serialConverterData;
-      console.log('[report-service] mapIndicatorSection - mapped serial_converter (both names):', serialConverterData);
-    } else {
+    } else if (field !== 'battery') {
+      // Skip battery field as it's removed from display
       mapped[field] = safeField(section, field);
     }
   });
   
   // Include any other fields from database
-  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
+  const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt', 'battery'];
   Object.keys(section).forEach(key => {
     if (!excludedKeys.includes(key) && !allowedFields.includes(key)) {
       const value = section[key];
@@ -158,10 +172,6 @@ function mapIndicatorSection(section = {}) {
       }
     }
   });
-  
-  console.log('[report-service] mapIndicatorSection - final mapped keys:', Object.keys(mapped));
-  console.log('[report-service] mapIndicatorSection - serial_converter in mapped:', mapped.serial_converter);
-  console.log('[report-service] mapIndicatorSection - serial_converter_plug in mapped:', mapped.serial_converter_plug);
   
   return mapped;
 }
@@ -235,12 +245,20 @@ function mapExteriorSection(section = {}) {
 }
 
 function mapJboxSection(section = {}) {
-  const allowedFields = ['box_integrity', 'collector_board', 'wire_tightener', 'resistor_element', 'protective_box'];
+  const allowedFields = ['box_integrity', 'collector_board', 'wire_tightener', 'resistor_element', 'resistance_element', 'protective_box'];
   
   const mapped = {};
   allowedFields.forEach(field => {
     mapped[field] = safeField(section, field);
   });
+  
+  // Handle both resistor_element and resistance_element (backend may use either)
+  if (section.resistance_element && !mapped.resistance_element) {
+    mapped['resistance_element'] = safeField(section, 'resistance_element');
+  }
+  if (section.resistor_element && !mapped.resistor_element) {
+    mapped['resistor_element'] = safeField(section, 'resistor_element');
+  }
   
   const excludedKeys = ['metadata', 'section', 'sessionStartedAt', 'lastUpdatedAt', 'sectionStatus', 'completedAt'];
   Object.keys(section).forEach(key => {
@@ -369,18 +387,67 @@ async function buildInspectionReportData(
     ? await loadImagesForAnswer(prisma, answer.id)
     : [];
 
+  // Extract platform dimensions from device model specs or metadata
+  const deviceModel = inspection.device?.model;
+  const modelSpecs = deviceModel?.specs || {};
+  
+  // Parse platform_size if it exists (format: "3*1.5" or "3 x 1.5")
+  let parsedLength = '';
+  let parsedWidth = '';
+  if (modelSpecs.platform_size) {
+    const sizeStr = modelSpecs.platform_size.toString();
+    const parts = sizeStr.split(/[*x×]/).map(p => p.trim());
+    if (parts.length === 2) {
+      parsedLength = parts[0];
+      parsedWidth = parts[1];
+    }
+  }
+  
+  const platformLength = metadata.platformLength || metadata.platform_length || modelSpecs.platformLength || modelSpecs.platform_length || parsedLength || '';
+  const platformWidth = metadata.platformWidth || metadata.platform_width || modelSpecs.platformWidth || modelSpecs.platform_width || parsedWidth || '';
+  const platformCount = metadata.platformCount || metadata.platform_count || modelSpecs.platformCount || modelSpecs.platform_count || '';
+
+  // Build model string with platform dimensions and count
+  // Format: "D2008 40М*3,4М 7"
+  const baseModel = metadata.model || inspection.device?.model?.model || '';
+  const modelParts = [];
+  if (baseModel) {
+    modelParts.push(baseModel);
+  }
+  
+  // Add platform dimensions: lengthМ*widthМ
+  if (platformLength && platformWidth) {
+    const lengthStr = typeof platformLength === 'number' 
+      ? `${platformLength}М` 
+      : platformLength.toString().trim().replace(/\s*м\s*$/i, '') + 'М';
+    const widthStr = typeof platformWidth === 'number' 
+      ? `${platformWidth}М` 
+      : platformWidth.toString().trim().replace(/\s*м\s*$/i, '') + 'М';
+    modelParts.push(`${lengthStr}*${widthStr}`);
+  }
+  
+  // Add count
+  if (platformCount) {
+    modelParts.push(platformCount.toString());
+  }
+  
+  const modelString = modelParts.join(' ');
+
   const d = {
     contractor: {
       company: contractorOrg?.name || '',
       contract_no: inspection.contract?.contractNumber || '',
-      contact: contractorOrg?.code || '',
+      contact: contractorOrg?.contactPhone || '',
     },
     metadata: {
       date: metadata.date || '',
       inspector: metadata.inspector || '',
       location: metadata.location || '',
       scale_id_serial_no: metadata.scale_id_serial_no || '',
-      model: metadata.model || inspection.device?.model?.model || '',
+      model: modelString,
+      platformLength: platformLength,
+      platformWidth: platformWidth,
+      platformCount: platformCount,
     },
     exterior: mapExteriorSection(dataRoot.exterior),
     indicator: mapIndicatorSection(dataRoot.indicator),
@@ -415,5 +482,12 @@ async function buildInspectionReportData(
 
 module.exports = {
   buildInspectionReportData,
+  mapExteriorSection,
+  mapIndicatorSection,
+  mapJboxSection,
+  mapSensorSection,
+  mapFoundationSection,
+  mapCleanlinessSection,
+  formatStatusForTemplate,
 };
 

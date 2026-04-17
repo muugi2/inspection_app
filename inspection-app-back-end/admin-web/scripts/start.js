@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
-const { spawn } = require('child_process');
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, execSync } from 'node:child_process';
 
 // Try different possible standalone paths
 const possiblePaths = [
@@ -40,15 +40,15 @@ const env = {
   NODE_ENV: 'production',
   PORT: port,
   HOSTNAME: hostname,
-  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://192.168.1.71:4555',
+  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://192.168.1.35:4555',
 };
 
 console.log('🚀 Starting production server...\n');
 console.log(`🌐 Server will be available at:`);
 if (useNetwork) {
   console.log(`   - Local:   http://localhost:${port}`);
-  console.log(`   - Network: http://192.168.1.71:${port}`);
-  console.log(`   ⚠️  Note: Use http://localhost:${port} or http://192.168.1.71:${port} in your browser`);
+  console.log(`   - Network: http://192.168.1.35:${port}`);
+  console.log(`   ⚠️  Note: Use http://localhost:${port} or http://192.168.1.35:${port} in your browser`);
   console.log(`   ❌ Do NOT use http://0.0.0.0:${port} (browsers don't support 0.0.0.0)`);
 } else {
   console.log(`   - Local:   http://localhost:${port}`);
@@ -76,7 +76,7 @@ if (standalonePath) {
       // Run copy script
       const copyScript = path.join(process.cwd(), 'scripts', 'copy-static.js');
       if (fs.existsSync(copyScript)) {
-        require('child_process').execSync(`node "${copyScript}"`, { stdio: 'inherit' });
+        execSync(`node "${copyScript}"`, { stdio: 'inherit' });
       } else {
         // Manual copy if script doesn't exist
         const standaloneNextDir = path.join(serverDir, '.next');

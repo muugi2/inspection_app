@@ -90,6 +90,31 @@ app.use('/api/devices', require('./routes/devices'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/documents', require('./routes/documents'));
+console.log('📋 Registering installation-assignments route...');
+try {
+  const installationAssignmentsRoute = require('./routes/installation-assignments');
+  console.log('✅ Installation assignments route module loaded successfully');
+  app.use('/api/installation-assignments', installationAssignmentsRoute);
+  console.log('✅ Installation assignments route registered successfully at /api/installation-assignments');
+} catch (error) {
+  console.error('❌ Failed to register installation-assignments route:', error);
+  console.error('   Error message:', error.message);
+  console.error('   Error stack:', error.stack);
+  throw error; // Re-throw to prevent server from starting with broken route
+}
+
+console.log('📋 Registering installation-acts route...');
+try {
+  const installationActsRoute = require('./routes/installation-acts');
+  console.log('✅ Installation acts route module loaded successfully');
+  app.use('/api/installation-acts', installationActsRoute);
+  console.log('✅ Installation acts route registered successfully at /api/installation-acts');
+} catch (error) {
+  console.error('❌ Failed to register installation-acts route:', error);
+  console.error('   Error message:', error.message);
+  console.error('   Error stack:', error.stack);
+  throw error; // Re-throw to prevent server from starting with broken route
+}
 try {
   app.use('/api/repairs', require('./routes/repairs'));
   console.log('✅ Repairs route registered successfully');
@@ -97,6 +122,18 @@ try {
   console.error('❌ Failed to register repairs route:', error);
   console.error('   Error message:', error.message);
   console.error('   Error stack:', error.stack);
+}
+console.log('📋 Registering verifications route...');
+try {
+  const verificationsRoute = require('./routes/verifications');
+  console.log('✅ Verifications route module loaded successfully');
+  app.use('/api/verifications', verificationsRoute);
+  console.log('✅ Verifications route registered successfully at /api/verifications');
+} catch (error) {
+  console.error('❌ Failed to register verifications route:', error);
+  console.error('   Error message:', error.message);
+  console.error('   Error stack:', error.stack);
+  throw error; // Re-throw to prevent server from starting with broken route
 }
 
 // 404 handler
@@ -116,6 +153,7 @@ app.use('*', (req, res) => {
   console.log(`[server]   - /api/users`);
   console.log(`[server]   - /api/templates`);
   console.log(`[server]   - /api/documents`);
+  console.log(`[server]   - /api/installation-assignments`);
   console.log(`[server]   - /api/repairs`);
   res.status(404).json({
     error: 'Route not found',
@@ -143,7 +181,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📱 API available at http://localhost:${PORT}`);
-  console.log(`📱 API available at http://192.168.1.71:${PORT}`);
+  console.log(`📱 API available at http://192.168.1.35:${PORT}`);
   console.log(`🏥 Health check at http://localhost:${PORT}/health`);
   console.log(`🌐 Network access: http://${require('os').networkInterfaces()['Ethernet']?.[0]?.address || '0.0.0.0'}:${PORT}`);
 });

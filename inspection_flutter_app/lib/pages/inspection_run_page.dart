@@ -12,11 +12,15 @@ import 'package:permission_handler/permission_handler.dart';
 class InspectionRunPage extends StatefulWidget {
   final String inspectionId;
   final Map<String, dynamic>? deviceInfo; // Device мэдээлэл дамжуулах
+  final String? answerId; // Үргэлжлүүлэх үед одоогийн answer ID
+  final Map<String, dynamic>? resumeData; // Үргэлжлүүлэх өгөгдөл
 
   const InspectionRunPage({
     super.key,
     required this.inspectionId,
     this.deviceInfo,
+    this.answerId,
+    this.resumeData,
   });
 
   @override
@@ -67,6 +71,15 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   @override
   void initState() {
     super.initState();
+    
+    // Үргэлжлүүлэх үед answerId болон resumeData-г тохируулах
+    if (widget.answerId != null && widget.answerId!.isNotEmpty) {
+      setState(() {
+        _answerId = widget.answerId;
+      });
+      debugPrint('✅ Resuming inspection with answerId: ${widget.answerId}');
+    }
+    
     _loadInspectionInfo();
     _loadTemplate();
 
@@ -80,6 +93,122 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       _loadDeviceInfo();
     }
   }
+  
+  // Load resume data (existing answers) - called after template is loaded
+  void _loadResumeData() {
+    try {
+      debugPrint('=== LOADING RESUME DATA ===');
+      final resumeData = widget.resumeData!;
+      
+      // Extract answers from resume data
+      final answers = resumeData['answers'] as Map<String, dynamic>?;
+      if (answers != null) {
+        debugPrint('✅ Found resume answers with ${answers.length} sections');
+        
+        // Load answers into form fields
+        // Note: We need to map field IDs to the correct field keys used in the form
+        answers.forEach((sectionName, sectionData) {
+          if (sectionName == 'metadata' || sectionName == 'remarks' || sectionName == 'signatures') {
+            return; // Skip metadata, remarks, signatures
+          }
+          
+          if (sectionData is Map<String, dynamic>) {
+            // Find the section index
+            final sectionIndex = _sections.indexWhere(
+              (s) => (s['section'] as String?) == sectionName || 
+                     (s['title'] as String?) == sectionName
+            );
+            
+            if (sectionIndex >= 0) {
+              final section = _sections[sectionIndex];
+              final fields = (section['fields'] as List<dynamic>? ?? []);
+              
+              sectionData.forEach((fieldId, fieldValue) {
+                if (fieldValue is Map<String, dynamic>) {
+                  // Find the field in the section
+                  for (int f = 0; f < fields.length; f++) {
+                    final field = fields[f] as Map<String, dynamic>;
+                    final currentFieldId = (field['id'] ?? '').toString();
+                    
+                    if (currentFieldId == fieldId) {
+                      final fieldKey = '$sectionIndex|$f';
+                      
+                      // Load selected options
+                      if (fieldValue['status'] != null) {
+                        final status = fieldValue['status'].toString();
+                        final options = (field['options'] as List<dynamic>?)
+                            ?.map((e) => e.toString())
+                            .toList() ?? [];
+                        final optionIndex = options.indexOf(status);
+                        if (optionIndex >= 0) {
+                          _selectedOptionsByField[fieldKey] = {optionIndex};
+                          debugPrint('✅ Loaded option for field $fieldId: $status (index: $optionIndex)');
+                        }
+                      }
+                      
+                      // Load text answers
+                      if (fieldValue['comment'] != null) {
+                        _fieldTextByKey[fieldKey] = fieldValue['comment'].toString();
+                        debugPrint('✅ Loaded comment for field $fieldId: ${fieldValue['comment']}');
+                      }
+                      break;
+                    }
+                  }
+                }
+              });
+            }
+          }
+        });
+        
+        // Set current section to next section from resume data
+        // If nextSection is provided, use it; otherwise find first incomplete section
+        final nextSection = resumeData['nextSection'] as String?;
+        int targetSectionIndex = 0;
+        
+        if (nextSection != null) {
+          // Use nextSection if provided
+          final sectionIndex = _sections.indexWhere(
+            (s) => (s['section'] as String?) == nextSection ||
+                   (s['title'] as String?) == nextSection
+          );
+          if (sectionIndex >= 0) {
+            targetSectionIndex = sectionIndex;
+            debugPrint('✅ Set current section to nextSection: $nextSection (index: $sectionIndex)');
+          }
+        } else {
+          // If nextSection is not provided, find first incomplete section
+          // Get completed sections from resume data
+          final completedSectionNames = <String>{};
+          answers.forEach((sectionName, sectionData) {
+            if (sectionName != 'metadata' && sectionName != 'remarks' && sectionName != 'signatures') {
+              if (sectionData is Map<String, dynamic> && sectionData.isNotEmpty) {
+                completedSectionNames.add(sectionName);
+              }
+            }
+          });
+          
+          // Find first section that is not completed
+          for (int i = 0; i < _sections.length; i++) {
+            final section = _sections[i];
+            final sectionName = (section['section'] as String?) ?? (section['title'] as String?);
+            if (sectionName != null && !completedSectionNames.contains(sectionName)) {
+              targetSectionIndex = i;
+              debugPrint('✅ Set current section to first incomplete section: $sectionName (index: $i)');
+              break;
+            }
+          }
+        }
+        
+        setState(() {
+          _currentSection = targetSectionIndex;
+        });
+        debugPrint('✅ Final current section index: $targetSectionIndex');
+      }
+    } catch (e) {
+      debugPrint('❌ Error loading resume data: $e');
+    }
+  }
+  
 
   // ===== DATA LOADING METHODS =====
   // Үзлэгийн мэдээлэл татах (scheduleType-ийг авах)
@@ -107,39 +236,38 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       _error = '';
     });
     try {
-      final dynamic resp = await TemplateAPI.getTemplates(
-        type: 'INSPECTION',
-        isActive: true,
-      );
-      // Support both list and object shapes. If list, pick the first active template.
+      // Use getInspectionTemplate to get the correct template for this inspection
+      final dynamic resp = await InspectionAPI.getInspectionTemplate(widget.inspectionId);
+      
+      // Extract template from response
       Map<String, dynamic>? tpl;
       if (resp is Map<String, dynamic>) {
-        final dynamic data =
-            resp['data'] ?? resp['result'] ?? resp['items'] ?? resp;
-        if (data is List && data.isNotEmpty) {
-          tpl = (data.first is Map<String, dynamic>)
-              ? data.first as Map<String, dynamic>
-              : null;
-        } else if (data is Map<String, dynamic>) {
-          tpl = data;
+        final dynamic data = resp['data'];
+        if (data is Map<String, dynamic>) {
+          tpl = data['template'];
         }
-      } else if (resp is List && resp.isNotEmpty) {
-        tpl = (resp.first is Map<String, dynamic>)
-            ? resp.first as Map<String, dynamic>
-            : null;
       }
+      
       final parsedSections = _extractSections(tpl);
       setState(() {
         _template = tpl;
         _sections = parsedSections;
+        // Only set _currentSection to 0 if not resuming (resumeData will set it correctly)
+        if (widget.resumeData == null) {
         _currentSection = 0;
+        }
         _selectedOptionsByField.clear();
         _fieldTextByKey.clear();
         _fieldHasImageByKey.clear();
       });
+      
+      // Template load хийгдсэний дараа resume data load хийх
+      if (widget.resumeData != null) {
+        _loadResumeData();
+      }
     } catch (e) {
       setState(() {
-        _error = 'Template ачаалах үед алдаа гарлаа: $e';
+        _error = ErrorHandler.handleApiError(e);
       });
     } finally {
       if (mounted) {
@@ -187,8 +315,25 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   List<Map<String, dynamic>> _extractSections(Map<String, dynamic>? tpl) {
     if (tpl == null) return const [];
     final dynamic rawSections = tpl['questions'];
+    
+    // Handle case where questions might be a JSON string (backward compatibility)
+    if (rawSections is String) {
+      try {
+        final parsed = jsonDecode(rawSections);
+        if (parsed is List) {
+          return _processSections(parsed);
+        }
+      } catch (e) {
+        debugPrint('❌ Error parsing questions string: $e');
+        return const [];
+      }
+    }
+    
     if (rawSections is! List) return const [];
+    return _processSections(rawSections);
+  }
 
+  List<Map<String, dynamic>> _processSections(List<dynamic> rawSections) {
     debugPrint('Raw sections count: ${rawSections.length}');
 
     return rawSections.map<Map<String, dynamic>>((sec) {
@@ -849,6 +994,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       }
     }
 
+
     // Хэрэв scheduleType олдохгүй бол зөвхөн "Үзлэг" гэж харуулах
     // Description эсвэл бусад fallback ашиглахгүй
 
@@ -1116,22 +1262,44 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
   // ===== DYNAMIC FIELD DISPLAY METHODS =====
 
   /// Check if text field should be shown based on selected answer
+  /// Ямар ч сонголт хийх үед зураг болон тайлбар бичих хэсгийг харуулах
+  /// "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал зураг болон тайлбар бичих шаардлагагүй
   bool _shouldShowTextField(Set<int> selected, List<dynamic> options) {
     if (selected.isEmpty) return false;
 
-    final selectedOption = options[selected.first].toString().trim();
-    // Show text field if answer is NOT exactly "Хэвийн" or "Цэвэр"
-    // Note: "Цэвэрлэх" should show text field, only "Цэвэр" should not
-    return selectedOption != 'Хэвийн' && selectedOption != 'Цэвэр';
+    // Ямар ч сонголт хийх үед тайлбар бичих хэсгийг харуулах
+    return true;
   }
 
   /// Check if image field should be shown based on selected answer
+  /// Ямар ч сонголт хийх үед зураг болон тайлбар бичих хэсгийг харуулах
+  /// "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал зураг болон тайлбар бичих шаардлагагүй
   bool _shouldShowImageField(Set<int> selected, List<dynamic> options) {
     if (selected.isEmpty) return false;
 
+    // Ямар ч сонголт хийх үед зураг оруулах хэсгийг харуулах
+    return true;
+  }
+  
+  /// Check if text field is required based on selected answer
+  /// "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал тайлбар бичих шаардлагагүй
+  /// Бусад сонголтуудыг хийхэд заавал тайлбар оруулах шаардлагатай
+  bool _isTextFieldRequired(Set<int> selected, List<dynamic> options) {
+    if (selected.isEmpty) return false;
+
     final selectedOption = options[selected.first].toString().trim();
-    // Show image field if answer is NOT exactly "Хэвийн" or "Цэвэр"
-    // Note: "Цэвэрлэх" should show image field, only "Цэвэр" should not
+    // "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал тайлбар бичих шаардлагагүй
+    return selectedOption != 'Хэвийн' && selectedOption != 'Цэвэр';
+  }
+  
+  /// Check if image field is required based on selected answer
+  /// "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал зураг оруулах шаардлагагүй
+  /// Бусад сонголтуудыг хийхэд заавал зураг оруулах шаардлагатай
+  bool _isImageFieldRequired(Set<int> selected, List<dynamic> options) {
+    if (selected.isEmpty) return false;
+
+    final selectedOption = options[selected.first].toString().trim();
+    // "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал зураг оруулах шаардлагагүй
     return selectedOption != 'Хэвийн' && selectedOption != 'Цэвэр';
   }
 
@@ -1148,13 +1316,15 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       if (selected.isEmpty) return false;
 
       // Check if text is required based on selected answer
-      if (_shouldShowTextField(selected, options)) {
+      // "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал тайлбар бичих шаардлагагүй
+      if (_isTextFieldRequired(selected, options)) {
         final txt = (_fieldTextByKey[key] ?? '').trim();
         if (txt.isEmpty) return false;
       }
 
       // Check if image is required based on selected answer
-      if (_shouldShowImageField(selected, options)) {
+      // "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал зураг оруулах шаардлагагүй
+      if (_isImageFieldRequired(selected, options)) {
         final imgs = _fieldImagesByKey[key] ?? const <File>[];
         if (imgs.isEmpty) return false;
       }
@@ -1176,13 +1346,15 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
       if (selected.isEmpty) return f;
 
       // Check if text is required based on selected answer
-      if (_shouldShowTextField(selected, options)) {
+      // "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал тайлбар бичих шаардлагагүй
+      if (_isTextFieldRequired(selected, options)) {
         final txt = (_fieldTextByKey[key] ?? '').trim();
         if (txt.isEmpty) return f;
       }
 
       // Check if image is required based on selected answer
-      if (_shouldShowImageField(selected, options)) {
+      // "Хэвийн" болон "Цэвэр" хэсгийг сонгох үед заавал зураг оруулах шаардлагагүй
+      if (_isImageFieldRequired(selected, options)) {
         final imgs = _fieldImagesByKey[key] ?? const <File>[];
         if (imgs.isEmpty) return f;
       }
@@ -1757,14 +1929,7 @@ class _InspectionRunPageState extends State<InspectionRunPage> {
                               saveSucceeded = true;
                             } catch (e) {
                               if (!mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Хэсэг хадгалахад алдаа гарлаа: $e',
-                                  ),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
+                              ErrorHandler.showError(context, ErrorHandler.handleApiError(e));
                             } finally {
                               if (mounted) {
                                 setState(() {

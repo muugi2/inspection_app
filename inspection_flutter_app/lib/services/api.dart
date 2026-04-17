@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/config/app_config.dart';
+import 'package:path/path.dart' as path;
 
 // Dio instance with centralized configuration
 final Dio api = Dio(
@@ -681,6 +682,64 @@ class InspectionAPI {
     }
   }
 
+  // Get incomplete inspections for current user
+  static Future<dynamic> getIncompleteInspections({String? type}) async {
+    try {
+      debugPrint('=== GETTING INCOMPLETE INSPECTIONS ===');
+      debugPrint('Type: ${type ?? 'all'}');
+
+      final queryParams = type != null ? {'type': type} : null;
+      final response = await api.get(
+        "/api/inspections/incomplete",
+        queryParameters: queryParams,
+      );
+
+      debugPrint('✅ Incomplete inspections retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting incomplete inspections: $e');
+      rethrow;
+    }
+  }
+
+  // Get incomplete inspection status
+  static Future<dynamic> getIncompleteInspectionStatus(
+    String inspectionId,
+  ) async {
+    try {
+      debugPrint('=== GETTING INCOMPLETE INSPECTION STATUS ===');
+      debugPrint('Inspection ID: $inspectionId');
+
+      final response = await api.get(
+        "/api/inspections/$inspectionId/incomplete-status",
+      );
+
+      debugPrint('✅ Incomplete inspection status retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting incomplete inspection status: $e');
+      rethrow;
+    }
+  }
+
+  // Get resume data for incomplete inspection
+  static Future<dynamic> getResumeData(String inspectionId) async {
+    try {
+      debugPrint('=== GETTING RESUME DATA ===');
+      debugPrint('Inspection ID: $inspectionId');
+
+      final response = await api.get(
+        "/api/inspections/$inspectionId/resume-data",
+      );
+
+      debugPrint('✅ Resume data retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting resume data: $e');
+      rethrow;
+    }
+  }
+
   // Submit signature image (base64) - using section-answers endpoint
   static Future<dynamic> submitSignatureImage(
     String inspectionId,
@@ -1026,5 +1085,613 @@ class TemplateAPI {
       queryParameters: {"type": type.toUpperCase(), "isActive": isActive},
     );
     return response.data;
+  }
+}
+
+// Device API methods
+class DeviceAPI {
+  static Future<dynamic> create(Map<String, dynamic> data) async {
+    final response = await api.post("/api/devices", data: data);
+    return response.data;
+  }
+
+  static Future<dynamic> update(String id, Map<String, dynamic> data) async {
+    final response = await api.put("/api/devices/$id", data: data);
+    return response.data;
+  }
+
+  static Future<dynamic> getById(String id) async {
+    final response = await api.get("/api/devices/$id");
+    return response.data;
+  }
+}
+
+// Device Model API methods
+class DeviceModelAPI {
+  static Future<dynamic> create(Map<String, dynamic> data) async {
+    final response = await api.post("/api/device-models", data: data);
+    return response.data;
+  }
+
+  static Future<dynamic> getAll() async {
+    final response = await api.get("/api/device-models");
+    return response.data;
+  }
+}
+
+// Settlement Template API methods
+class SettlementTemplateAPI {
+  // Get all settlement templates
+  static Future<dynamic> getAll() async {
+    try {
+      debugPrint('=== GETTING SETTLEMENT TEMPLATES ===');
+      // Direct SQL query эсвэл backend endpoint ашиглах
+      // Одоогоор inspection_templates-ээс INSTALLATION type-тай template-уудыг авах
+      final response = await api.get(
+        "/api/templates/type/INSTALLATION",
+        queryParameters: {"isActive": true},
+      );
+      debugPrint('✅ Settlement templates retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting settlement templates: $e');
+      rethrow;
+    }
+  }
+
+  // Get settlement template by device_type
+  static Future<dynamic> getByDeviceType(String deviceType) async {
+    try {
+      debugPrint('=== GETTING SETTLEMENT TEMPLATE BY DEVICE TYPE ===');
+      debugPrint('Device Type: $deviceType');
+      
+      final response = await api.get(
+        "/api/templates/type/INSTALLATION",
+        queryParameters: {
+          "isActive": true,
+          "deviceType": deviceType,
+        },
+      );
+      
+      debugPrint('✅ Settlement template retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting settlement template: $e');
+      rethrow;
+    }
+  }
+
+  // Get settlement template by ID
+  static Future<dynamic> getById(String id) async {
+    try {
+      debugPrint('=== GETTING SETTLEMENT TEMPLATE BY ID ===');
+      debugPrint('Template ID: $id');
+      
+      final response = await api.get("/api/templates/$id");
+      debugPrint('✅ Settlement template retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting settlement template: $e');
+      rethrow;
+    }
+  }
+}
+
+// Organization API methods
+class OrganizationAPI {
+  static Future<dynamic> getAll() async {
+    final response = await api.get("/api/organizations");
+    return response.data;
+  }
+}
+
+// Site API methods
+class SiteAPI {
+  static Future<dynamic> getAll() async {
+    final response = await api.get("/api/sites");
+    return response.data;
+  }
+
+  static Future<dynamic> getByOrganization(String orgId) async {
+    final response = await api.get("/api/sites/organization/$orgId");
+    return response.data;
+  }
+}
+
+// Contract API methods
+class ContractAPI {
+  static Future<dynamic> getAll() async {
+    final response = await api.get("/api/contracts");
+    return response.data;
+  }
+
+  static Future<dynamic> getByOrganization(String orgId) async {
+    final response = await api.get("/api/contracts/organization/$orgId");
+    return response.data;
+  }
+}
+
+// Installation Assignment API methods
+class InstallationAssignmentAPI {
+  // Get all installation assignments for current user
+  static Future<dynamic> getByUser(String userId) async {
+    try {
+      debugPrint('=== GETTING INSTALLATION ASSIGNMENTS FOR USER ===');
+      debugPrint('User ID: $userId');
+      final response = await api.get("/api/installation-assignments/user/$userId");
+      debugPrint('✅ Installation assignments retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting installation assignments: $e');
+      rethrow;
+    }
+  }
+
+  // Get all installation assignments with filters
+  static Future<dynamic> getAll({
+    String? contractId,
+    String? templateId,
+    String? userId,
+    String? status,
+    int? page,
+    int? limit,
+  }) async {
+    try {
+      debugPrint('=== GETTING ALL INSTALLATION ASSIGNMENTS ===');
+      final queryParams = <String, dynamic>{};
+      if (contractId != null) queryParams['contractId'] = contractId;
+      if (templateId != null) queryParams['templateId'] = templateId;
+      if (userId != null) queryParams['userId'] = userId;
+      if (status != null) queryParams['status'] = status;
+      if (page != null) queryParams['page'] = page;
+      if (limit != null) queryParams['limit'] = limit;
+
+      final response = await api.get(
+        "/api/installation-assignments",
+        queryParameters: queryParams,
+      );
+      debugPrint('✅ Installation assignments retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting installation assignments: $e');
+      rethrow;
+    }
+  }
+
+  // Get installation assignment by ID
+  static Future<dynamic> getById(String id) async {
+    try {
+      debugPrint('=== GETTING INSTALLATION ASSIGNMENT BY ID ===');
+      debugPrint('Assignment ID: $id');
+      final response = await api.get("/api/installation-assignments/$id");
+      debugPrint('✅ Installation assignment retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting installation assignment: $e');
+      rethrow;
+    }
+  }
+}
+
+// Verification API methods
+class VerificationAPI {
+  // Get all verifications for current user
+  static Future<dynamic> getByUser(String userId) async {
+    try {
+      debugPrint('=== GETTING VERIFICATIONS FOR USER ===');
+      debugPrint('User ID: $userId');
+      final response = await api.get("/api/verifications/user/$userId");
+      debugPrint('✅ Verifications retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting verifications: $e');
+      rethrow;
+    }
+  }
+
+  // Get verification by ID
+  static Future<dynamic> getById(String id) async {
+    try {
+      debugPrint('=== GETTING VERIFICATION BY ID ===');
+      debugPrint('Verification ID: $id');
+      final response = await api.get("/api/verifications/$id");
+      debugPrint('✅ Verification retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting verification: $e');
+      rethrow;
+    }
+  }
+
+  // Update verification
+  static Future<dynamic> update(String id, Map<String, dynamic> data) async {
+    try {
+      debugPrint('=== UPDATING VERIFICATION ===');
+      debugPrint('Verification ID: $id');
+      debugPrint('Data: $data');
+      final response = await api.put("/api/verifications/$id", data: data);
+      debugPrint('✅ Verification updated: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error updating verification: $e');
+      rethrow;
+    }
+  }
+
+  // Create verification
+  static Future<dynamic> create({
+    required String orgId,
+    String? siteId,
+    String? contractId,
+    required String title,
+    required List<String> userIds,
+  }) async {
+    try {
+      debugPrint('=== CREATING VERIFICATION ===');
+      debugPrint('Org ID: $orgId');
+      debugPrint('Title: $title');
+      debugPrint('User IDs: $userIds');
+      
+      final data = <String, dynamic>{
+        'orgId': orgId,
+        'title': title,
+        'userIds': userIds,
+      };
+      if (siteId != null) data['siteId'] = siteId;
+      if (contractId != null) data['contractId'] = contractId;
+      
+      final response = await api.post("/api/verifications", data: data);
+      debugPrint('✅ Verification created: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error creating verification: $e');
+      rethrow;
+    }
+  }
+}
+
+// Installation Answer API methods
+class InstallationAnswerAPI {
+  // Save field answer (comment)
+  static Future<dynamic> saveFieldAnswer({
+    required String assignmentId,
+    required String templateId,
+    required String section,
+    required String fieldId,
+    required String question,
+    required String comment,
+    String? status,
+  }) async {
+    try {
+      debugPrint('=== SAVING INSTALLATION FIELD ANSWER ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Template ID: $templateId');
+      debugPrint('Section: $section');
+      debugPrint('Field ID: $fieldId');
+      debugPrint('Comment: $comment');
+
+      final response = await api.post(
+        "/api/installation-assignments/$assignmentId/answers",
+        data: {
+          'templateId': templateId,
+          'section': section,
+          'fieldId': fieldId,
+          'question': question,
+          'comment': comment,
+          'status': status ?? '',
+        },
+      );
+
+      debugPrint('✅ Field answer saved successfully: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error saving field answer: $e');
+      rethrow;
+    }
+  }
+
+  // Get answers for a template
+  static Future<dynamic> getAnswers({
+    required String assignmentId,
+    required String templateId,
+  }) async {
+    try {
+      debugPrint('=== GETTING INSTALLATION ANSWERS ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Template ID: $templateId');
+
+      final response = await api.get(
+        "/api/installation-assignments/$assignmentId/answers/$templateId",
+      );
+
+      debugPrint('✅ Answers retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting answers: $e');
+      rethrow;
+    }
+  }
+
+  // Upload images for a field
+  static Future<dynamic> uploadImages({
+    required String assignmentId,
+    required String templateId,
+    required String section,
+    required String fieldId,
+    required List<File> images,
+  }) async {
+    try {
+      debugPrint('=== UPLOADING INSTALLATION IMAGES ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Template ID: $templateId');
+      debugPrint('Section: $section');
+      debugPrint('Field ID: $fieldId');
+      debugPrint('Images count: ${images.length}');
+
+      final formData = FormData();
+
+      // Add metadata fields
+      formData.fields.add(MapEntry('templateId', templateId));
+      formData.fields.add(MapEntry('section', section));
+      formData.fields.add(MapEntry('fieldId', fieldId));
+
+      // Add image files
+      for (int i = 0; i < images.length; i++) {
+        final file = images[i];
+        final fileName =
+            'installation_${assignmentId}_template_${templateId}_field_${fieldId}_${DateTime.now().millisecondsSinceEpoch}_$i.jpg';
+
+        formData.files.add(
+          MapEntry(
+            'images',
+            await MultipartFile.fromFile(file.path, filename: fileName),
+          ),
+        );
+        debugPrint('  Adding image ${i + 1}: $fileName');
+      }
+
+      final uploadUrl = '/api/installation-assignments/$assignmentId/upload-images';
+      debugPrint('Upload URL: $uploadUrl');
+
+      final uploadResponse = await api.post(
+        uploadUrl,
+        data: formData,
+        options: Options(headers: {'Content-Type': 'multipart/form-data'}),
+      );
+
+      if (uploadResponse.statusCode != 200 &&
+          uploadResponse.statusCode != 201) {
+        throw Exception(
+          'Image upload failed with status: ${uploadResponse.statusCode}',
+        );
+      }
+
+      debugPrint('✅ Images uploaded successfully: ${uploadResponse.data}');
+      return uploadResponse.data;
+    } on DioException catch (e) {
+      debugPrint('❌ DioException uploading images: $e');
+      debugPrint('   Response: ${e.response?.data}');
+      debugPrint('   Status: ${e.response?.statusCode}');
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ Error uploading images: $e');
+      rethrow;
+    }
+  }
+
+  // Get images for a field
+  static Future<dynamic> getImages({
+    required String assignmentId,
+    String? templateId,
+    String? section,
+    String? fieldId,
+  }) async {
+    try {
+      debugPrint('=== GETTING INSTALLATION IMAGES ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Template ID: $templateId');
+      debugPrint('Section: $section');
+      debugPrint('Field ID: $fieldId');
+
+      final queryParams = <String, dynamic>{};
+      if (templateId != null) queryParams['templateId'] = templateId;
+      if (section != null) queryParams['section'] = section;
+      if (fieldId != null) queryParams['fieldId'] = fieldId;
+
+      final response = await api.get(
+        "/api/installation-assignments/$assignmentId/images",
+        queryParameters: queryParams,
+      );
+
+      debugPrint('✅ Images retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting images: $e');
+      rethrow;
+    }
+  }
+
+  // Delete an image
+  static Future<dynamic> deleteImage({
+    required String assignmentId,
+    required String imageId,
+  }) async {
+    try {
+      debugPrint('=== DELETING INSTALLATION IMAGE ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Image ID: $imageId');
+
+      final response = await api.delete(
+        "/api/installation-assignments/$assignmentId/images/$imageId",
+      );
+
+      debugPrint('✅ Image deleted successfully: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error deleting image: $e');
+      rethrow;
+    }
+  }
+}
+
+// Installation Act API methods
+class InstallationActAPI {
+  // Get acts for a specific assignment and template
+  static Future<dynamic> getByAssignmentAndTemplate({
+    required String assignmentId,
+    required String templateId,
+  }) async {
+    try {
+      debugPrint('=== GETTING INSTALLATION ACTS ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Template ID: $templateId');
+
+      final response = await api.get(
+        "/api/installation-acts/assignment/$assignmentId/template/$templateId",
+      );
+
+      debugPrint('✅ Acts retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting acts: $e');
+      rethrow;
+    }
+  }
+
+  // Get a single act by ID
+  static Future<dynamic> getById(String id) async {
+    try {
+      debugPrint('=== GETTING INSTALLATION ACT ===');
+      debugPrint('Act ID: $id');
+
+      final response = await api.get("/api/installation-acts/$id");
+
+      debugPrint('✅ Act retrieved: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error getting act: $e');
+      rethrow;
+    }
+  }
+
+  // Create a new act
+  static Future<dynamic> create({
+    required String assignmentId,
+    required String orgId,
+    required String title,
+    required String templateId,
+    String? actTitle,
+    String? comment,
+  }) async {
+    try {
+      debugPrint('=== CREATING INSTALLATION ACT ===');
+      debugPrint('Assignment ID: $assignmentId');
+      debugPrint('Org ID: $orgId');
+      debugPrint('Title: $title');
+      debugPrint('Template ID: $templateId');
+      debugPrint('Act Title: $actTitle');
+
+      final response = await api.post(
+        "/api/installation-acts",
+        data: {
+          'assignmentId': assignmentId,
+          'orgId': orgId,
+          'title': title,
+          'templateId': templateId,
+          if (actTitle != null && actTitle.isNotEmpty) 'actTitle': actTitle,
+          if (comment != null) 'comment': comment,
+        },
+      );
+
+      debugPrint('✅ Act created successfully: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error creating act: $e');
+      rethrow;
+    }
+  }
+
+  // Update an act
+  static Future<dynamic> update({
+    required String id,
+    String? actTitle,
+    String? comment,
+    String? imageUrl,
+    String? fileName,
+    int? fileSize,
+  }) async {
+    try {
+      debugPrint('=== UPDATING INSTALLATION ACT ===');
+      debugPrint('Act ID: $id');
+
+      final data = <String, dynamic>{};
+      if (actTitle != null) data['actTitle'] = actTitle;
+      if (comment != null) data['comment'] = comment;
+      if (imageUrl != null) data['imageUrl'] = imageUrl;
+      if (fileName != null) data['fileName'] = fileName;
+      if (fileSize != null) data['fileSize'] = fileSize;
+
+      final response = await api.put(
+        "/api/installation-acts/$id",
+        data: data,
+      );
+
+      debugPrint('✅ Act updated successfully: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error updating act: $e');
+      rethrow;
+    }
+  }
+
+  // Upload act file
+  static Future<dynamic> uploadFile({
+    required String actId,
+    required File file,
+  }) async {
+    try {
+      debugPrint('=== UPLOADING INSTALLATION ACT FILE ===');
+      debugPrint('Act ID: $actId');
+      debugPrint('File: ${file.path}');
+
+      final formData = FormData();
+      formData.files.add(
+        MapEntry(
+          'file',
+          await MultipartFile.fromFile(
+            file.path,
+            filename: path.basename(file.path),
+          ),
+        ),
+      );
+
+      final response = await api.post(
+        "/api/installation-acts/$actId/upload-file",
+        data: formData,
+        options: Options(headers: {'Content-Type': 'multipart/form-data'}),
+      );
+
+      debugPrint('✅ Act file uploaded successfully: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error uploading act file: $e');
+      rethrow;
+    }
+  }
+
+  // Delete an act
+  static Future<dynamic> delete(String id) async {
+    try {
+      debugPrint('=== DELETING INSTALLATION ACT ===');
+      debugPrint('Act ID: $id');
+
+      final response = await api.delete("/api/installation-acts/$id");
+
+      debugPrint('✅ Act deleted successfully: ${response.data}');
+      return response.data;
+    } catch (e) {
+      debugPrint('❌ Error deleting act: $e');
+      rethrow;
+    }
   }
 }

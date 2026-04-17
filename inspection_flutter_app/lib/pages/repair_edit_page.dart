@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:dio/dio.dart';
 import 'package:app/services/api.dart';
 import 'package:app/assets/app_colors.dart';
+import 'package:app/utils/error_handler.dart';
 
 class RepairEditPage extends StatefulWidget {
   final String inspectionId;
@@ -301,27 +301,10 @@ class _RepairEditPageState extends State<RepairEditPage> {
       debugPrint('❌ Error saving repair: $e');
       debugPrint('❌ Stack trace: $stackTrace');
       
-      String errorMessage = 'Хадгалахад алдаа гарлаа';
-      if (e is DioException) {
-        debugPrint('   DioException details:');
-        debugPrint('     Type: ${e.type}');
-        debugPrint('     Message: ${e.message}');
-        debugPrint('     Response: ${e.response}');
-        if (e.response != null) {
-          debugPrint('     Status code: ${e.response!.statusCode}');
-          debugPrint('     Response data: ${e.response!.data}');
-          errorMessage = 'Алдаа: ${e.response!.data?['message'] ?? e.message}';
-        }
-      }
+      final errorMessage = ErrorHandler.handleApiError(e);
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            backgroundColor: Colors.redAccent,
-            duration: const Duration(seconds: 5),
-          ),
-        );
+        ErrorHandler.showError(context, errorMessage);
       }
     } finally {
       if (mounted) {

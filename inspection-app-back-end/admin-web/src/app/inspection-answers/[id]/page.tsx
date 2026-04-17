@@ -33,6 +33,7 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [answerId, setAnswerId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const router = useRouter();
   const resolvedParams = use(params);
@@ -84,7 +85,8 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
       setIsLoading(true);
       setError('');
       const response = await apiService.inspectionAnswers.getById(id);
-      setAnswer(response.data);
+      const payload = (response as { data?: InspectionAnswer })?.data ?? (response as InspectionAnswer);
+      setAnswer(payload);
     } catch (err) {
       console.error('Failed to load inspection answer:', err);
       setError('Үзлэгийн хариултыг ачаалахад алдаа гарлаа');
@@ -140,40 +142,85 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
               </div>
               <div className="flex items-center gap-3">
                 {answer?.id && (
-                  <button
-                    onClick={async () => {
-                      try {
-                        const blob = await apiService.reports.downloadAnswerDocx(
-                          answer.id
-                        );
-                        fileDownload(blob, `inspection-answer-${answer.id}.docx`);
-                      } catch (err: any) {
-                        console.error('Failed to download docx:', err);
-                        
-                        // Extract error message from response
-                        let errorMessage = 'DOCX татах явцад алдаа гарлаа.';
-                        if (err?.response?.data) {
-                          const errorData = err.response.data;
-                          errorMessage = errorData.message || errorData.error || errorMessage;
-                          
-                          // Log full error details in development
-                          if (process.env.NODE_ENV === 'development') {
-                            console.error('Full error response:', errorData);
-                            if (errorData.details) {
-                              console.error('Error details:', errorData.details);
-                            }
+                  <>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const blob = await apiService.reports.downloadAnswerPdf(
+                            answer.id
+                          );
+                          fileDownload(blob, `inspection-answer-${answer.id}.pdf`);
+                        } catch (err: any) {
+                          let errorMessage = 'PDF татах явцад алдаа гарлаа.';
+                          if (err?.response?.data) {
+                            const errorData = err.response.data;
+                            errorMessage = errorData.message || errorData.error || errorMessage;
+                          } else if (err?.message) {
+                            errorMessage = err.message;
                           }
-                        } else if (err?.message) {
-                          errorMessage = err.message;
+                          
+                          setError(`PDF татах алдаа: ${errorMessage}`);
                         }
-                        
-                        setError(`DOCX татах алдаа: ${errorMessage}`);
-                      }
-                    }}
-                    className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
-                  >
-                    DOCX татах
-                  </button>
+                      }}
+                      className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                    >
+                      PDF татах
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          setError('');
+                          await apiService.reports.sendAnswerEmail(answer.id);
+                          alert('Үзлэгийн тайланг mail-ээр амжилттай илгээлээ.');
+                        } catch (err: any) {
+                          let errorMessage = 'Mail илгээх явцад алдаа гарлаа.';
+                          if (err?.response?.data) {
+                            const errorData = err.response.data;
+                            errorMessage = errorData.message || errorData.error || errorMessage;
+                          } else if (err?.message) {
+                            errorMessage = err.message;
+                          }
+                          setError(errorMessage);
+                        }
+                      }}
+                      className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                    >
+                      Mail илгээх
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!answer.id) {
+                          setError('Үзлэгийн хариултын ID олдсонгүй.');
+                          return;
+                        }
+                        if (!confirm('Энэ үзлэгийн хариултыг (асуултын зургууд, засварын мэдээлэл, FTP зургуудтай хамт) бүрмөсөн устгах уу? Үзлэг (inspections) хүснэгтэд үлдэнэ. Энэ үйлдлийг буцааж болохгүй.')) {
+                          return;
+                        }
+                        try {
+                          setIsDeleting(true);
+                          setError('');
+                          await apiService.inspectionAnswers.delete(String(answer.id));
+                          alert('Үзлэгийн хариулт амжилттай устгагдлаа.');
+                          router.push('/inspection-answers');
+                        } catch (err: any) {
+                          let errorMessage = 'Үзлэгийн хариулт устгах явцад алдаа гарлаа.';
+                          if (err?.response?.data) {
+                            const errorData = err.response.data;
+                            errorMessage = errorData.message || errorData.error || errorMessage;
+                          } else if (err?.message) {
+                            errorMessage = err.message;
+                          }
+                          setError(errorMessage);
+                        } finally {
+                          setIsDeleting(false);
+                        }
+                      }}
+                      disabled={isDeleting}
+                      className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                    >
+                      {isDeleting ? 'Устгаж байна...' : 'Үзлэгийн хариулт устгах'}
+                    </button>
+                  </>
                 )}
                 <div className="text-right hidden md:block">
                   <p className="text-sm font-medium text-gray-900">{user?.fullName}</p>
@@ -201,14 +248,12 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
           <div className="px-4 py-5 sm:px-6">
             <h3 className="text-lg leading-6 font-medium text-gray-900">Үзлэгийн мэдээлэл</h3>
             <p className="mt-1 text-sm text-gray-500">
-              A4 хэлбэрийн тайланг preview болон DOCX татах товчоор нээн харж болно.
+              A4 хэлбэрийн тайланг preview болон DOCX татах товчоор нээн харж болно. Огноо болон санал тэмдэглэлийг A4 preview дээр шууд засах боломжтой.
             </p>
           </div>
           <div className="border-t border-gray-200 px-4 py-6 sm:px-6 space-y-3 text-sm text-gray-700">
             <p><span className="font-semibold text-gray-900">Үзлэгийн ID:</span> {answer.id}</p>
             <p><span className="font-semibold text-gray-900">Үзлэг:</span> {answer.inspection?.title ?? 'Мэдээлэл байхгүй'}</p>
-            <p><span className="font-semibold text-gray-900">Төрөл:</span> {answer.inspection?.type ?? 'Мэдээлэл байхгүй'}</p>
-            <p><span className="font-semibold text-gray-900">Статус:</span> {answer.inspection?.status ?? 'Мэдээлэл байхгүй'}</p>
             <p><span className="font-semibold text-gray-900">Хариулсан огноо:</span> {answer.answeredAt ? new Date(answer.answeredAt).toLocaleString() : 'Мэдээлэл байхгүй'}</p>
             <p><span className="font-semibold text-gray-900">Шалгагч:</span> {answer.user?.fullName ?? 'Мэдээлэл байхгүй'}</p>
           </div>

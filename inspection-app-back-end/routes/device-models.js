@@ -20,6 +20,7 @@ router.get('/', authMiddleware, async (req, res) => {
       id: model.id.toString(),
       manufacturer: model.manufacturer,
       model: model.model,
+      deviceType: model.deviceType,
       specs: model.specs,
       createdAt: model.createdAt,
       updatedAt: model.updatedAt,
@@ -44,28 +45,21 @@ router.get('/', authMiddleware, async (req, res) => {
 // POST create new device model
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { manufacturer, model, specs } = req.body;
+    const { manufacturer, model, deviceType, specs } = req.body;
 
     // Validation
-    if (!manufacturer || !model) {
+    if (!manufacturer || !model || !deviceType) {
       return res.status(400).json({
         error: 'Validation failed',
-        message: 'Manufacturer and model are required',
+        message: 'Manufacturer, model, and device type are required',
       });
     }
 
-    // Check if model already exists
-    const existingModel = await prisma.DeviceModel.findFirst({
-      where: {
-        manufacturer,
-        model,
-      },
-    });
-
-    if (existingModel) {
+    // Validate deviceType
+    if (deviceType && !['ANALOG', 'DIGITAL'].includes(deviceType)) {
       return res.status(400).json({
         error: 'Validation failed',
-        message: 'Device model already exists',
+        message: 'Device type must be either ANALOG or DIGITAL',
       });
     }
 
@@ -82,6 +76,7 @@ router.post('/', authMiddleware, async (req, res) => {
       data: {
         manufacturer,
         model,
+        deviceType: deviceType,
         specs: specs || {},
       },
     });
@@ -92,6 +87,7 @@ router.post('/', authMiddleware, async (req, res) => {
         id: deviceModel.id.toString(),
         manufacturer: deviceModel.manufacturer,
         model: deviceModel.model,
+        deviceType: deviceModel.deviceType,
         specs: deviceModel.specs,
         createdAt: deviceModel.createdAt,
         updatedAt: deviceModel.updatedAt,
@@ -113,7 +109,7 @@ router.post('/', authMiddleware, async (req, res) => {
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { manufacturer, model, specs } = req.body;
+    const { manufacturer, model, deviceType, specs } = req.body;
 
     // Check if device model exists
     const existingModel = await prisma.DeviceModel.findUnique({
@@ -127,23 +123,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if updated model name already exists
-    if ((manufacturer || model) &&
-        (manufacturer !== existingModel.manufacturer || model !== existingModel.model)) {
-      const duplicateModel = await prisma.DeviceModel.findFirst({
-        where: {
-          manufacturer: manufacturer || existingModel.manufacturer,
-          model: model || existingModel.model,
-          id: { not: BigInt(id) },
-        },
+    // Validate deviceType
+    if (deviceType && !['ANALOG', 'DIGITAL'].includes(deviceType)) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: 'Device type must be either ANALOG or DIGITAL',
       });
-
-      if (duplicateModel) {
-        return res.status(400).json({
-          error: 'Validation failed',
-          message: 'Device model already exists',
-        });
-      }
     }
 
     // Validate specs is valid JSON if provided
@@ -160,6 +145,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
       data: {
         ...(manufacturer && { manufacturer }),
         ...(model && { model }),
+        ...(deviceType && { deviceType }),
         ...(specs !== undefined && { specs }),
       },
     });
@@ -170,6 +156,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
         id: deviceModel.id.toString(),
         manufacturer: deviceModel.manufacturer,
         model: deviceModel.model,
+        deviceType: deviceModel.deviceType,
         specs: deviceModel.specs,
         createdAt: deviceModel.createdAt,
         updatedAt: deviceModel.updatedAt,

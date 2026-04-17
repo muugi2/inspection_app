@@ -171,9 +171,12 @@ class SectionAnswersService {
     
     const inspection = await prisma.inspection.findUnique({
       where: { id: inspectionId },
-      select: {
-        id: true, orgId: true, status: true, assignedTo: true, 
-        createdBy: true, templateId: true, type: true,
+      include: {
+        assignments: {
+          select: {
+            userId: true,
+          },
+        },
       },
     });
 
@@ -185,16 +188,24 @@ class SectionAnswersService {
     console.log('✅ Inspection found:', {
       id: inspection.id.toString(), orgId: inspection.orgId.toString(),
       assignedTo: inspection.assignedTo?.toString(), createdBy: inspection.createdBy.toString(),
-      templateId: inspection.templateId?.toString(), status: inspection.status
+      templateId: inspection.templateId?.toString(), status: inspection.status,
+      assignmentsCount: inspection.assignments?.length || 0
     });
 
     // Check access
+    // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
     const sameOrg = inspection.orgId.toString() === orgIdFromToken;
     const isAssignee = inspection.assignedTo?.toString() === userStringId;
+    const isInAssignments = inspection.assignments?.some(
+      assignment => assignment.userId?.toString() === userStringId
+    ) || false;
     const isCreator = inspection.createdBy.toString() === userStringId;
-    const hasAccess = sameOrg || isAssignee || isCreator;
+    const hasAccess = sameOrg || isAssignee || isInAssignments || isCreator;
 
-    console.log('Access check:', { hasAccess, sameOrg, isAssignee, isCreator });
+    console.log('Access check:', { 
+      hasAccess, sameOrg, isAssignee, isInAssignments, isCreator,
+      assignments: inspection.assignments?.map(a => a.userId.toString()) || []
+    });
     
     if (!hasAccess) {
       console.error('❌ Access denied');
@@ -428,22 +439,31 @@ class SectionAnswersService {
   extractSignatures(params) {
     // Check if this is a signatures section
     if (params.section === 'signatures') {
-      // Try different possible structures
+      // If answers object contains signature data directly (e.g., {inspector: "...", ...})
+      // Treat the entire answers object as signatures
+      if (params.answers && typeof params.answers === 'object') {
+        // Check if it's already a signatures object
       if (params.answers.signatures && typeof params.answers.signatures === 'object') {
         return params.answers.signatures;
       }
       if (params.answers.signature) {
         return params.answers.signature;
+        }
+        // If answers contains signature fields directly (e.g., inspector, etc.)
+        // Return the entire answers object as signatures
+        if (Object.keys(params.answers).length > 0) {
+          return params.answers;
+        }
       }
     }
     
     // Check if signatures exist in answers
-    if (params.answers.signatures && typeof params.answers.signatures === 'object') {
+    if (params.answers && params.answers.signatures && typeof params.answers.signatures === 'object') {
       return params.answers.signatures;
     }
     
     // Check if signature exists in answers
-    if (params.answers.signature) {
+    if (params.answers && params.answers.signature) {
       return params.answers.signature;
     }
     
@@ -453,14 +473,26 @@ class SectionAnswersService {
   /**
    * Unified database operation - create or update record
    */
-  async performDatabaseOperation({ tx, operation, inspectionId, userId, answers, targetId = null }) {
+  async performDatabaseOperation({ tx, operation, inspectionId, userId, answers, targetId = null, status = null }) {
     const baseData = { answeredBy: userId, answeredAt: new Date() };
     
+    // For create operation, always set status (default to IN_PROGRESS if not provided)
     if (operation === 'create') {
+      if (status) {
+        baseData.status = status;
+      } else {
+        baseData.status = 'IN_PROGRESS'; // Default for new records
+      }
       return await tx.inspectionAnswer.create({
         data: { inspectionId, answers, ...baseData }
       });
     } else if (operation === 'update' && targetId) {
+      // For update operation, only update status if explicitly provided
+      // This preserves existing status (e.g., IN_PROGRESS) when resuming
+      if (status !== null && status !== undefined) {
+        baseData.status = status;
+      }
+      // If status is null/undefined, don't include it in update (preserves existing status)
       return await tx.inspectionAnswer.update({
         where: { id: targetId },
         data: { answers, ...baseData }
@@ -615,10 +647,11 @@ class SectionAnswersService {
       operation: 'create',
       inspectionId,
       userId,
-      answers: finalAnswers
+      answers: finalAnswers,
+      status: 'COMPLETED'
     });
     
-    console.log(`Created final merged record ${sectionAnswer.id}`);
+    console.log(`Created final merged record ${sectionAnswer.id} (status: COMPLETED)`);
     return { sectionAnswer, didCreate: true, extractedMetadata };
   }
 
@@ -680,12 +713,13 @@ class SectionAnswersService {
         operation: 'create',
         inspectionId,
         userId,
-        answers: sectionAnswers
+        answers: sectionAnswers,
+        status: 'IN_PROGRESS' // New record should be IN_PROGRESS
       });
       didCreate = true;
-      console.log(`Created initial answer record ${sectionAnswer.id} for section '${section}'`);
+      console.log(`Created initial answer record ${sectionAnswer.id} for section '${section}' with status IN_PROGRESS`);
     } else {
-      // Update existing record
+      // Update existing record - preserve IN_PROGRESS status if it exists
       const existing = targetAnswer.answers || {};
       const existingData = existing.data || existing;
       
@@ -719,15 +753,21 @@ class SectionAnswersService {
         }
       }
       
+      // Preserve IN_PROGRESS status when updating existing record (resume scenario)
+      // If the existing record has IN_PROGRESS status, keep it as IN_PROGRESS
+      // Otherwise, don't change the status (pass null to preserve existing)
+      const currentStatus = targetAnswer.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : null;
+      
       sectionAnswer = await this.performDatabaseOperation({
         tx,
         operation: 'update',
         inspectionId,
         userId,
         answers: merged,
-        targetId: targetAnswer.id
+        targetId: targetAnswer.id,
+        status: currentStatus // Preserve IN_PROGRESS status when resuming
       });
-      console.log(`Updated answer record ${sectionAnswer.id} by merging section '${section}'`);
+      console.log(`Updated answer record ${sectionAnswer.id} by merging section '${section}' with status ${currentStatus || 'unchanged (preserved existing)'}`);
     }
 
     return { sectionAnswer, didCreate, extractedMetadata };
@@ -927,7 +967,8 @@ class SectionAnswersService {
           inspectionId,
           userId,
           answers: updatedAnswers,
-          targetId: targetAnswer.id
+          targetId: targetAnswer.id,
+          status: 'COMPLETED'
         });
         
         console.log(`✅ Updated target record ${updatedAnswer.id} with signatures:`, extractedSignatures);
@@ -1014,7 +1055,8 @@ class SectionAnswersService {
         inspectionId,
         userId,
         answers: updatedAnswers,
-        targetId: anyAnswer.id
+        targetId: anyAnswer.id,
+        status: 'COMPLETED'
       });
       
       console.log(`✅ Updated record ${updatedAnswer.id} with signatures:`, extractedSignatures);
@@ -1051,10 +1093,11 @@ class SectionAnswersService {
       inspectionId,
       userId,
       answers: updatedAnswers,
-      targetId: mainAnswer.id
+      targetId: mainAnswer.id,
+      status: 'COMPLETED'
     });
 
-    console.log(`✅ Updated main record ${updatedAnswer.id} with signatures:`, extractedSignatures);
+    console.log(`✅ Updated main record ${updatedAnswer.id} with signatures (status: COMPLETED):`, extractedSignatures);
     console.log('🔍 Final saved answers:', JSON.stringify(updatedAnswer.answers, null, 2));
     return { sectionAnswer: updatedAnswer, didCreate: false, extractedMetadata: null };
   }

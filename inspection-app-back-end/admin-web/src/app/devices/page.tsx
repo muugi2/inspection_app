@@ -54,6 +54,14 @@ interface DeviceModel {
   id: string;
   manufacturer: string;
   model: string;
+  deviceType?: string;
+  specs?: {
+    platform_size?: string;
+    platform_count?: number;
+    max_weight?: number;
+    min_weight?: number;
+    precision?: string;
+  };
 }
 
 export default function DevicesPage() {
@@ -478,11 +486,35 @@ export default function DevicesPage() {
                     required
                   >
                     <option value="">Сонгоно уу</option>
-                    {deviceModels.map(model => (
-                      <option key={model.id} value={model.id}>
-                        {model.manufacturer} {model.model}
-                      </option>
-                    ))}
+                    {deviceModels.map(model => {
+                      // Format platform size (e.g., "3*1.5" -> "3м x 1.5м")
+                      let platformSizeText = '';
+                      if (model.specs?.platform_size) {
+                        const sizeStr = model.specs.platform_size.toString();
+                        if (sizeStr.includes('*')) {
+                          const parts = sizeStr.split('*');
+                          platformSizeText = ` • ${parts[0].trim()}м x ${parts[1].trim()}м`;
+                        } else {
+                          platformSizeText = ` • ${sizeStr}`;
+                        }
+                      }
+                      
+                      // Format device type
+                      const deviceTypeText = model.deviceType 
+                        ? ` • ${model.deviceType === 'ANALOG' ? 'Аналог' : model.deviceType === 'DIGITAL' ? 'Дижитал' : model.deviceType}`
+                        : '';
+                      
+                      // Format platform count
+                      const platformCountText = model.specs?.platform_count 
+                        ? ` • Тавцан: ${model.specs.platform_count}`
+                        : '';
+                      
+                      return (
+                        <option key={model.id} value={model.id}>
+                          {model.manufacturer} {model.model}{deviceTypeText}{platformSizeText}{platformCountText}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 

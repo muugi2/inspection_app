@@ -1,38 +1,27 @@
 import axios from 'axios';
 
+// Backend port (Docker: 4555, must match BACKEND_PORT)
+const BACKEND_PORT = process.env.NEXT_PUBLIC_BACKEND_PORT || '4555';
+
 // API Configuration
-// Use NEXT_PUBLIC_API_URL environment variable or fallback to default
-// For production, set NEXT_PUBLIC_API_URL in .env.local file
-// Example: NEXT_PUBLIC_API_URL=http://192.168.1.71:4555
+// In the browser: always use current hostname + backend port so that
+// - http://192.168.1.35:3002 -> API http://192.168.1.35:4555
+// - http://localhost:3000 -> API http://localhost:4555
+// This fixes PDF download, inspection delete, and mail when opening via Docker IP.
 function getApiBaseUrl(): string {
-  // Check if NEXT_PUBLIC_API_URL is set (highest priority)
+  if (typeof window !== 'undefined') {
+    return `http://${window.location.hostname}:${BACKEND_PORT}`;
+  }
+  // SSR / build: use env or fallback
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
-  
-  // Check if we're in browser (client-side)
-  if (typeof window !== 'undefined') {
-    // Client-side: use current hostname to determine API URL
-    const hostname = window.location.hostname;
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:4555';
-    }
-    // Use server IP for network access
-    return 'http://192.168.1.71:4555';
-  }
-  
-  // Server-side: check NODE_ENV
-  if (process.env.NODE_ENV === 'production') {
-    return 'http://192.168.1.71:4555';
-  }
-  
-  // Default to localhost for development
-  return 'http://localhost:4555';
+  return `http://192.168.1.35:${BACKEND_PORT}`;
 }
 
 export const API_CONFIG = {
   BASE_URL: getApiBaseUrl(),
-  TIMEOUT: 10000,
+  TIMEOUT: 120000, // 2 minutes for large file downloads (docx)
 };
 
 // Create axios instance with default config
@@ -140,6 +129,8 @@ export const API_ENDPOINTS = {
     TEMPLATE: '/api/inspections/:id/template',
     SECTION_ANSWERS: '/api/inspections/section-answers',
     ASSIGN: '/api/inspections/:id/assign',
+    ASSIGN_BY_SITE: '/api/inspections/site/:siteId/assign',
+    ASSIGN_BY_CONTRACT: '/api/inspections/contract/:contractId/assign',
     IMAGE_GALLERY: '/api/inspections/:id/image-gallery',
   },
   USERS: {
@@ -156,8 +147,13 @@ export const API_ENDPOINTS = {
   },
   REPORTS: {
     ANSWER_PREVIEW: '/api/documents/answers/:id/preview',
-    ANSWER_DOCX: '/api/documents/answers/:id/docx',
-    MONTHLY_REPORT: '/api/documents/sites/:siteId/monthly-report',
+    ANSWER_PDF: '/api/documents/answers/:id/pdf',
+    ANSWER_EMAIL: '/api/documents/answers/:id/email',
+    MONTHLY_REPORT: '/api/documents/organizations/:orgId/monthly-report',
+    MONTHLY_REPORT_EMAIL: '/api/documents/organizations/:orgId/monthly-report/email',
+    REPAIR_PREVIEW: '/api/documents/repairs/:inspectionId/preview',
+    REPAIR_DOCX: '/api/documents/repairs/:inspectionId/docx',
+    INSTALLATION_REPORT: '/api/documents/contracts/:contractId/installation-report',
   },
   REPAIRS: {
     LIST: '/api/repairs',
@@ -166,6 +162,23 @@ export const API_ENDPOINTS = {
     ANALYZE: '/api/repairs/analyze/:inspectionId',
     UPDATE: '/api/repairs/:id',
     UPLOAD_IMAGES: '/api/repairs/:id/upload-images',
+    ASSIGN: '/api/repairs/:id/assign',
+  },
+  INSTALLATION_ASSIGNMENTS: {
+    LIST: '/api/installation-assignments',
+    CREATE: '/api/installation-assignments',
+    BY_USER: '/api/installation-assignments/user/:userId',
+    DETAIL: '/api/installation-assignments/:id',
+    UPDATE: '/api/installation-assignments/:id',
+    DELETE: '/api/installation-assignments/:id',
+  },
+  VERIFICATIONS: {
+    LIST: '/api/verifications',
+    CREATE: '/api/verifications',
+    BY_USER: '/api/verifications/user/:userId',
+    DETAIL: '/api/verifications/:id',
+    UPDATE: '/api/verifications/:id',
+    DELETE: '/api/verifications/:id',
   },
 };
 
@@ -298,6 +311,7 @@ export const apiService = {
     create: async (data: {
       manufacturer: string;
       model: string;
+      deviceType: string;
       specs?: any;
     }) => {
       const response = await apiClient.post(API_ENDPOINTS.DEVICE_MODELS.CREATE, data);
@@ -307,6 +321,7 @@ export const apiService = {
     update: async (id: string, data: {
       manufacturer?: string;
       model?: string;
+      deviceType?: string;
       specs?: any;
     }) => {
       const url = API_ENDPOINTS.DEVICE_MODELS.UPDATE.replace(':id', id);
@@ -384,6 +399,8 @@ export const apiService = {
       scheduleType?: string;
       title: string;
       scheduledAt?: string;
+      startedAt?: string;
+      completedAt?: string;
       notes?: string;
     }) => {
       const response = await apiClient.post(API_ENDPOINTS.INSPECTIONS.CREATE, data);
@@ -393,6 +410,8 @@ export const apiService = {
     update: async (id: string, data: {
       title?: string;
       scheduledAt?: string;
+      startedAt?: string;
+      completedAt?: string;
       notes?: string;
       status?: string;
       scheduleType?: string;
@@ -424,8 +443,26 @@ export const apiService = {
       return response.data;
     },
     
-    assign: async (inspectionId: string, userId: string) => {
+    assign: async (inspectionId: string, userId: string | string[]) => {
       const url = API_ENDPOINTS.INSPECTIONS.ASSIGN.replace(':id', inspectionId);
+      // Support both single userId and array of userIds
+      const payload = Array.isArray(userId) 
+        ? { userIds: userId }
+        : { userId };
+      const response = await apiClient.put(url, payload);
+      return response.data;
+    },
+
+    assignBySite: async (siteId: string, userId: string) => {
+      const url = API_ENDPOINTS.INSPECTIONS.ASSIGN_BY_SITE.replace(':siteId', siteId);
+      const response = await apiClient.put(url, {
+        userId,
+      });
+      return response.data;
+    },
+
+    assignByContract: async (contractId: string, userId: string) => {
+      const url = API_ENDPOINTS.INSPECTIONS.ASSIGN_BY_CONTRACT.replace(':contractId', contractId);
       const response = await apiClient.put(url, {
         userId,
       });
@@ -497,7 +534,8 @@ export const apiService = {
     },
     
     getByType: async (type: string) => {
-      const response = await apiClient.get(`${API_ENDPOINTS.TEMPLATES.BY_TYPE}/${type}`);
+      const url = API_ENDPOINTS.TEMPLATES.BY_TYPE.replace(':type', type);
+      const response = await apiClient.get(url);
       return response.data;
     },
   },
@@ -515,38 +553,24 @@ export const apiService = {
     },
     
     getQuestionImages: async (answerId: string, params?: { fieldId?: string; section?: string }) => {
-      console.log('\n=== API: getQuestionImages ===');
-      console.log('Called with:', { answerId, params });
       const url = `/api/inspection-answers/${answerId}/question-images`;
-      console.log('Request URL:', url);
-      
       const response = await apiClient.get(url, { params });
-      console.log('Response status:', response.status);
-      console.log('Response data keys:', Object.keys(response.data || {}));
-      console.log('Response data structure:', {
-        hasData: !!response.data,
-        hasDataData: !!response.data?.data,
-        hasDataImages: !!response.data?.data?.images,
-        hasMessage: !!response.data?.message,
-        imageCount: response.data?.data?.images?.length || response.data?.images?.length || 0,
-      });
-      
-      if (response.data?.data?.images && response.data.data.images.length > 0) {
-        console.log('First image from API:', {
-          keys: Object.keys(response.data.data.images[0]),
-          hasImageData: !!response.data.data.images[0].imageData,
-          imageDataLength: response.data.data.images[0].imageData?.length || 0,
-          imageDataPreview: response.data.data.images[0].imageData?.substring(0, 100) || 'N/A',
-          mimeType: response.data.data.images[0].mimeType,
-          section: response.data.data.images[0].section,
-        });
-      }
-      
       return response.data;
     },
 
     getDocxData: async (id: string) => {
       const response = await apiClient.get(`/api/inspection-answers/${id}/docx-data`);
+      return response.data;
+    },
+
+    update: async (id: string, data: { date?: string; remarks?: string; section?: string; fieldId?: string; comment?: string }) => {
+      const response = await apiClient.put(`/api/inspection-answers/${id}`, data);
+      return response.data;
+    },
+
+    /** Delete only this answer and related data (question images, repairs, repair images). Does not delete the inspection. */
+    delete: async (answerId: string) => {
+      const response = await apiClient.delete(`/api/inspection-answers/${answerId}`);
       return response.data;
     },
   },
@@ -593,10 +617,20 @@ export const apiService = {
       return response.data;
     },
 
-    downloadAnswerDocx: async (answerId: string) => {
-      const url = API_ENDPOINTS.REPORTS.ANSWER_DOCX.replace(':id', answerId);
+    getRepairPreview: async (inspectionId: string, repairId?: string) => {
+      const url = API_ENDPOINTS.REPORTS.REPAIR_PREVIEW.replace(':inspectionId', inspectionId);
+      const params = repairId ? { repairId } : {};
+      const response = await apiClient.get(url, { params });
+      return response.data;
+    },
+
+    downloadAnswerPdf: async (answerId: string) => {
+      const url = API_ENDPOINTS.REPORTS.ANSWER_PDF.replace(':id', answerId);
       try {
-        const response = await apiClient.get(url, { responseType: 'blob' });
+        const response = await apiClient.get(url, {
+          responseType: 'blob',
+          timeout: 600000,
+        });
         return response.data;
       } catch (error: any) {
         // If error response is a blob (JSON error message), parse it
@@ -620,13 +654,112 @@ export const apiService = {
       }
     },
 
-    downloadMonthlyReport: async (siteId: string, year: number, month: number) => {
-      const url = API_ENDPOINTS.REPORTS.MONTHLY_REPORT.replace(':siteId', siteId);
+    sendAnswerEmail: async (answerId: string) => {
+      const url = API_ENDPOINTS.REPORTS.ANSWER_EMAIL.replace(':id', answerId);
+      // Олон зурагтай үед PDF + SMTP удаан — default 2 мин хүрэлцэхгүй
+      // body-parser strict JSON нь primitive/null body-г reject хийдэг тул {} илгээнэ
+      const response = await apiClient.post(url, {}, { timeout: 600000 });
+      return response.data;
+    },
+
+    downloadMonthlyReport: async (
+      orgId: string,
+      year: number,
+      month: number,
+      startDay?: number,
+      endDay?: number
+    ) => {
+      const url = API_ENDPOINTS.REPORTS.MONTHLY_REPORT.replace(':orgId', orgId);
       try {
+        const params: Record<string, number> = { year, month };
+        if (typeof startDay === 'number') params.startDay = startDay;
+        if (typeof endDay === 'number') params.endDay = endDay;
+
         const response = await apiClient.get(url, {
-          params: { year, month },
+          params,
           responseType: 'blob',
         });
+        
+        // Ensure blob has correct PDF MIME type from response header
+        const contentType = response.headers['content-type'] || response.headers['Content-Type'] || '';
+        console.log('Response Content-Type:', contentType);
+        console.log('Response data type:', response.data instanceof Blob ? 'Blob' : typeof response.data);
+        console.log('Response data size:', response.data instanceof Blob ? response.data.size : 'unknown');
+        
+        // Check if response is actually a blob
+        if (!(response.data instanceof Blob)) {
+          console.error('Response data is not a Blob:', typeof response.data);
+          throw new Error('Invalid response format: expected Blob');
+        }
+        
+        // Ensure PDF MIME type
+        if (contentType.includes('application/pdf') || response.data.type === 'application/pdf') {
+          // If blob type is already correct, return as is
+          if (response.data.type === 'application/pdf') {
+            return response.data;
+          }
+          // Otherwise, create new blob with correct type
+          return new Blob([response.data], { type: 'application/pdf' });
+        }
+        
+        // If content type is not PDF but we got a blob, try to use it anyway
+        // (sometimes server doesn't set content-type correctly)
+        if (response.data.size > 0) {
+          console.warn('Response Content-Type is not PDF, but creating PDF blob anyway');
+          return new Blob([response.data], { type: 'application/pdf' });
+        }
+        
+        throw new Error('Empty or invalid PDF response');
+      } catch (error: any) {
+        console.error('Error downloading monthly report:', error);
+        
+        // If error response is a blob (JSON error message), parse it
+        if (error.response?.data instanceof Blob) {
+          try {
+            const blobType = error.response.data.type;
+            if (blobType === 'application/json' || blobType === 'text/json') {
+              const text = await error.response.data.text();
+              try {
+                const errorData = JSON.parse(text);
+                const parsedError = new Error(errorData.message || errorData.error || 'Failed to download monthly report');
+                (parsedError as any).response = {
+                  ...error.response,
+                  data: errorData,
+                };
+                throw parsedError;
+              } catch (parseError) {
+                console.error('Failed to parse error JSON:', parseError);
+                throw error;
+              }
+            }
+          } catch (blobError) {
+            console.error('Failed to read error blob:', blobError);
+          }
+        }
+        throw error;
+      }
+    },
+
+    sendMonthlyReportEmail: async (
+      orgId: string,
+      year: number,
+      month: number,
+      startDay?: number,
+      endDay?: number
+    ) => {
+      const url = API_ENDPOINTS.REPORTS.MONTHLY_REPORT_EMAIL.replace(':orgId', orgId);
+      const params: Record<string, number> = { year, month };
+      if (typeof startDay === 'number') params.startDay = startDay;
+      if (typeof endDay === 'number') params.endDay = endDay;
+      const response = await apiClient.post(url, {}, { params, timeout: 600000 });
+      return response.data;
+    },
+
+    downloadRepairDocx: async (inspectionId: string, repairId?: string) => {
+      const url = API_ENDPOINTS.REPORTS.REPAIR_DOCX.replace(':inspectionId', inspectionId);
+      const params = repairId ? { repairId } : {};
+      try {
+        const response = await apiClient.get(url, { params, responseType: 'blob' });
         return response.data;
       } catch (error: any) {
         // If error response is a blob (JSON error message), parse it
@@ -634,13 +767,34 @@ export const apiService = {
           const text = await error.response.data.text();
           try {
             const errorData = JSON.parse(text);
-            const parsedError = new Error(errorData.message || errorData.error || 'Failed to download monthly report');
+            const parsedError = new Error(errorData.message || errorData.error || 'Failed to download repair report');
             (parsedError as any).response = {
               ...error.response,
               data: errorData,
             };
             throw parsedError;
           } catch (parseError) {
+            throw error;
+          }
+        }
+        throw error;
+      }
+    },
+
+    downloadInstallationReport: async (contractId: string) => {
+      const url = API_ENDPOINTS.REPORTS.INSTALLATION_REPORT.replace(':contractId', contractId);
+      try {
+        const response = await apiClient.get(url, { responseType: 'blob' });
+        return response.data;
+      } catch (error: any) {
+        if (error.response?.data instanceof Blob && error.response.data.type === 'application/json') {
+          const text = await error.response.data.text();
+          try {
+            const errorData = JSON.parse(text);
+            const parsedError = new Error(errorData.message || errorData.error || 'Суурьлуулалтын тайлан татахад алдаа гарлаа');
+            (parsedError as any).response = { ...error.response, data: errorData };
+            throw parsedError;
+          } catch (_) {
             throw error;
           }
         }
@@ -681,6 +835,7 @@ export const apiService = {
 
     update: async (id: string, data: {
       description?: string;
+      repairDescription?: string;
       repairStatus?: string;
       repairedAt?: string;
       verifiedAt?: string;
@@ -701,6 +856,127 @@ export const apiService = {
           'Content-Type': 'multipart/form-data',
         },
       });
+      return response.data;
+    },
+
+    assign: async (repairId: string, userId: string) => {
+      const url = API_ENDPOINTS.REPAIRS.ASSIGN.replace(':id', repairId);
+      const response = await apiClient.put(url, {
+        userId,
+      });
+      return response.data;
+    },
+  },
+  
+  // Installation Assignment services
+  installationAssignments: {
+    getAll: async (params?: {
+      contractId?: string;
+      templateId?: string;
+      userId?: string;
+      status?: string;
+      page?: number;
+      limit?: number;
+    }) => {
+      const response = await apiClient.get(API_ENDPOINTS.INSTALLATION_ASSIGNMENTS.LIST, { params });
+      return response.data;
+    },
+    
+    create: async (data: {
+      contractId: string;
+      templateIds: string[];
+      userIds: string[];
+      title: string;
+      extraInfo?: any;
+    }) => {
+      const response = await apiClient.post(API_ENDPOINTS.INSTALLATION_ASSIGNMENTS.CREATE, data);
+      return response.data;
+    },
+    
+    getByUser: async (userId: string) => {
+      const url = API_ENDPOINTS.INSTALLATION_ASSIGNMENTS.BY_USER.replace(':userId', userId);
+      const response = await apiClient.get(url);
+      return response.data;
+    },
+    
+    getById: async (id: string) => {
+      const url = API_ENDPOINTS.INSTALLATION_ASSIGNMENTS.DETAIL.replace(':id', id);
+      const response = await apiClient.get(url);
+      return response.data;
+    },
+    
+    update: async (id: string, data: {
+      status?: string;
+      title?: string;
+      extraInfo?: any;
+      actUrl?: string | null;
+      actFileName?: string | null;
+      actFileSize?: number | null;
+    }) => {
+      const url = API_ENDPOINTS.INSTALLATION_ASSIGNMENTS.UPDATE.replace(':id', id);
+      const response = await apiClient.put(url, data);
+      return response.data;
+    },
+    
+    delete: async (id: string) => {
+      const url = API_ENDPOINTS.INSTALLATION_ASSIGNMENTS.DELETE.replace(':id', id);
+      const response = await apiClient.delete(url);
+      return response.data;
+    },
+  },
+  
+  // Verification services
+  verifications: {
+    getAll: async (params?: {
+      orgId?: string;
+      siteId?: string;
+      contractId?: string;
+      userId?: string;
+      status?: string;
+      page?: number;
+      limit?: number;
+    }) => {
+      const response = await apiClient.get(API_ENDPOINTS.VERIFICATIONS.LIST, { params });
+      return response.data;
+    },
+    
+    create: async (data: {
+      orgId: string;
+      siteId?: string;
+      contractId?: string;
+      title: string;
+      userIds: string[];
+    }) => {
+      const response = await apiClient.post(API_ENDPOINTS.VERIFICATIONS.CREATE, data);
+      return response.data;
+    },
+    
+    getByUser: async (userId: string) => {
+      const url = API_ENDPOINTS.VERIFICATIONS.BY_USER.replace(':userId', userId);
+      const response = await apiClient.get(url);
+      return response.data;
+    },
+    
+    getById: async (id: string) => {
+      const url = API_ENDPOINTS.VERIFICATIONS.DETAIL.replace(':id', id);
+      const response = await apiClient.get(url);
+      return response.data;
+    },
+    
+    update: async (id: string, data: {
+      status?: string;
+      comment?: string;
+      image1Url?: string;
+      image2Url?: string;
+    }) => {
+      const url = API_ENDPOINTS.VERIFICATIONS.UPDATE.replace(':id', id);
+      const response = await apiClient.put(url, data);
+      return response.data;
+    },
+    
+    delete: async (id: string) => {
+      const url = API_ENDPOINTS.VERIFICATIONS.DELETE.replace(':id', id);
+      const response = await apiClient.delete(url);
       return response.data;
     },
   },

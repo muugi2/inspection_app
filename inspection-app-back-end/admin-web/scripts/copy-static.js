@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 
 // Copy static files from project root to standalone folder
 const projectStaticPath = path.join(process.cwd(), '.next', 'static');

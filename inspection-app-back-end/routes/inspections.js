@@ -9,8 +9,7 @@ const {
 } = require('../utils/imageStorage');
 const { serializeBigInt, handleError, parseBigIntId } = require('../utils/routeHelpers');
 const sectionAnswersService = require('../services/section-answers-service');
-const { sendInspectionAssignmentEmail, sendInspectionCompletionEmail } = require('../services/email-service');
-const { generateInspectionDocx } = require('./documents');
+const { sendInspectionAssignmentEmail } = require('../services/email-service');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -93,19 +92,134 @@ const formatDateTime = value => {
 };
 
 /**
+ * Get device type from device metadata or model
+ * @param {Object} device - Device object with metadata and model
+ * @returns {string|null} - Device type (ANALOG/DIGITAL) or null
+ */
+function getDeviceType(device) {
+  if (!device) return null;
+  
+  // Check metadata for type (ANALOG/DIGITAL)
+  if (device.metadata && typeof device.metadata === 'object') {
+    const metadataType = device.metadata.type;
+    if (metadataType === 'ANALOG' || metadataType === 'DIGITAL') {
+      return metadataType;
+    }
+  }
+  
+  // If not in metadata, use model's deviceType
+  if (device.model?.deviceType) {
+    return device.model.deviceType;
+  }
+  
+  return null;
+}
+
+/**
+ * Find template by device type and inspection type
+ * @param {string} deviceType - Device type (ANALOG/DIGITAL)
+ * @param {string} inspectionType - Inspection type (MAINTENANCE, INSPECTION, etc.)
+ * @param {boolean} allowFallback - If true, fallback to deviceType-only match
+ * @returns {Promise<Object|null>} - Template object or null
+ */
+async function findTemplateByDeviceType(deviceType, inspectionType = null, allowFallback = true) {
+  if (!deviceType) return null;
+  
+  const templateSelect = {
+    id: true,
+    name: true,
+    type: true,
+    deviceType: true,
+    description: true,
+    questions: true,
+    isActive: true,
+  };
+  
+  // First, try to find template matching both device type and inspection type
+  if (inspectionType) {
+    const template = await prisma.InspectionTemplate.findFirst({
+      where: {
+        type: inspectionType,
+        deviceType: deviceType,
+        isActive: true,
+      },
+      select: templateSelect,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    
+    if (template) {
+      return template;
+    }
+  }
+  
+  // Fallback: find template matching only device type
+  if (allowFallback) {
+    const fallbackTemplate = await prisma.InspectionTemplate.findFirst({
+      where: {
+        deviceType: deviceType,
+        isActive: true,
+      },
+      select: templateSelect,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    
+    return fallbackTemplate;
+  }
+  
+  return null;
+}
+
+/**
+ * Format device info for API response
+ * @param {Object} device - Device object from Prisma
+ * @returns {Object|null} - Formatted device info or null
+ */
+function formatDeviceInfo(device) {
+  if (!device) return null;
+  
+  return {
+    id: device.id?.toString() || device.id,
+    serialNumber: device.serialNumber,
+    assetTag: device.assetTag,
+    metadata: device.metadata,
+    location: device.metadata?.location || 'Тодорхойлогдоогүй',
+    model: device.model ? {
+      ...device.model,
+      id: device.model.id?.toString() || device.model.id,
+    } : null,
+    organization: device.organization ? {
+      ...device.organization,
+      id: device.organization.id?.toString() || device.organization.id,
+    } : null,
+    site: device.site ? {
+      ...device.site,
+      id: device.site.id?.toString() || device.site.id,
+    } : null,
+    contract: device.contract ? {
+      ...device.contract,
+      id: device.contract.id?.toString() || device.contract.id,
+    } : null,
+  };
+}
+
+/**
  * Get section answers for a specific section
  */
 async function getSectionAnswers(inspectionId, sectionName) {
   const answers = await prisma.InspectionAnswer.findMany({
     where: { inspectionId },
-    orderBy: { answeredAt: 'asc' },
+    orderBy: { answeredAt: 'desc' }, // Get latest first
     select: { id: true, answers: true, answeredBy: true, answeredAt: true },
   });
 
   if (answers.length === 0) return {};
 
-  // Find the latest answer that contains this section
-  for (let i = answers.length - 1; i >= 0; i--) {
+  // Find the latest answer that contains this section (now first in array)
+  for (let i = 0; i < answers.length; i++) {
     const answer = answers[i];
     const answerData = answer.answers || {};
     const sectionData = answerData.data || answerData; // Support both formats
@@ -168,18 +282,68 @@ async function getAssignedInspectionsByType(userId, inspectionType = null) {
   // Exclude: APPROVED, REJECTED, CANCELED
   const ACTIVE_STATUSES = ['DRAFT', 'IN_PROGRESS', 'SUBMITTED'];
   
+  const now = new Date();
+  
+  // Build date filter OR conditions
+  const dateFilterOR = [
+    // Case 1: Both startedAt and completedAt are set - current date must be between them
+    {
+      AND: [
+        { startedAt: { not: null } },
+        { completedAt: { not: null } },
+        { startedAt: { lte: now } },
+        { completedAt: { gte: now } },
+      ],
+    },
+    // Case 2: Only startedAt is set - current date must be >= startedAt
+    {
+      AND: [
+        { startedAt: { not: null } },
+        { completedAt: null },
+        { startedAt: { lte: now } },
+      ],
+    },
+    // Case 3: Only completedAt is set - current date must be <= completedAt
+    {
+      AND: [
+        { startedAt: null },
+        { completedAt: { not: null } },
+        { completedAt: { gte: now } },
+      ],
+    },
+    // Case 4: Both are null - show inspection (for backward compatibility with old data)
+    {
+      AND: [
+        { startedAt: null },
+        { completedAt: null },
+      ],
+    },
+  ];
+  
   const whereClause = {
-    assignedTo: userId,
     deletedAt: null,
     status: {
       in: ACTIVE_STATUSES,
     },
+    // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
+    AND: [
+      {
+        OR: [
+          { assignedTo: userId },
+          { assignments: { some: { userId: userId } } },
+        ],
+      },
+      {
+        OR: dateFilterOR,
+      },
+    ],
   };
 
   if (inspectionType) whereClause.type = inspectionType;
 
   console.log(`[getAssignedInspectionsByType] Query:`, JSON.stringify({
     assignedTo: userId.toString(),
+    assignments: { some: { userId: userId.toString() } },
     deletedAt: null,
     status: { in: ACTIVE_STATUSES },
     type: inspectionType || 'all types'
@@ -195,20 +359,31 @@ async function getAssignedInspectionsByType(userId, inspectionType = null) {
           email: true,
         },
       },
+      assignments: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+        },
+      },
       device: {
         select: {
           id: true,
           serialNumber: true,
           assetTag: true,
-          model: { select: { manufacturer: true, model: true } },
+          model: { select: { manufacturer: true, model: true, deviceType: true } },
         },
       },
       site: { select: { id: true, name: true } },
       contract: {
-        select: { id: true, contractName: true, contractNumber: true },
+        select: { id: true, contractName: true, contractNumber: true, endDate: true },
       },
       createdByUser: { select: { id: true, fullName: true, email: true } },
-      template: { select: { id: true, name: true, type: true } },
+      template: { select: { id: true, name: true, type: true, deviceType: true } },
     },
     orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'desc' }],
   });
@@ -227,10 +402,14 @@ async function getAssignedInspectionsByType(userId, inspectionType = null) {
   } else {
     console.log(`[getAssignedInspectionsByType] No inspections found. Checking database...`);
     // Check if there are any inspections assigned to this user (without status filter)
+    // Check both assignedTo and assignments
     const allAssigned = await prisma.Inspection.findMany({
       where: {
-        assignedTo: userId,
         deletedAt: null,
+        OR: [
+          { assignedTo: userId },
+          { assignments: { some: { userId: userId } } },
+        ],
       },
       select: {
         id: true,
@@ -264,11 +443,14 @@ async function getAssignedInspectionsByType(userId, inspectionType = null) {
       fullName: inspection.assignee.fullName,
       email: inspection.assignee.email,
     } : null,
+    assignedUsers: inspection.assignments?.map(a => ({
+      id: a.user.id.toString(),
+      fullName: a.user.fullName,
+      email: a.user.email,
+    })) || [],
     createdBy: inspection.createdBy.toString(),
     updatedBy: inspection.updatedBy?.toString(),
-    device: inspection.device
-      ? { ...inspection.device, id: inspection.device.id.toString() }
-      : null,
+    device: formatDeviceInfo(inspection.device),
     site: inspection.site
       ? { ...inspection.site, id: inspection.site.id.toString() }
       : null,
@@ -295,8 +477,12 @@ function checkInspectionAccess(inspection, orgIdFromToken, userId, isAdmin = fal
 
   const sameOrg = inspection.orgId.toString() === orgIdFromToken;
   const isAssignee = inspection.assignedTo?.toString() === userId;
+  // Check if user is in assignments (for multiple assignments support)
+  const isInAssignments = inspection.assignments?.some(
+    assignment => assignment.userId?.toString() === userId
+  ) || false;
   const isCreator = inspection.createdBy.toString() === userId;
-  return sameOrg || isAssignee || isCreator;
+  return sameOrg || isAssignee || isInAssignments || isCreator;
 }
 
 /**
@@ -306,21 +492,27 @@ async function verifyInspectionAccess(
   inspectionId,
   userId,
   orgIdFromToken,
-  selectFields = {}
+  includeFields = {}
 ) {
-  const defaultSelect = {
-    id: true,
-    orgId: true,
-    assignedTo: true,
-    createdBy: true,
-    templateId: true,
-    type: true,
-    title: true,
+  const defaultInclude = {
+    device: {
+      include: {
+        model: true, // Include all model fields (we need deviceType)
+      },
+    },
+    assignments: {
+      select: {
+        userId: true,
+      },
+    },
   };
+
+  // Merge includeFields with defaultInclude
+  const finalInclude = { ...defaultInclude, ...includeFields };
 
   const inspection = await prisma.Inspection.findUnique({
     where: { id: inspectionId },
-    select: { ...defaultSelect, ...selectFields },
+    include: finalInclude,
   });
 
   if (!inspection) {
@@ -345,9 +537,12 @@ async function verifyInspectionAccess(
 
 /**
  * Get template and sections for inspection
+ * If templateId is not set, try to find template by device type from device metadata
  */
 async function getTemplateAndSections(inspection) {
   let template = null;
+  
+  // First, try to get template from inspection's templateId
   if (inspection.templateId) {
     template = await prisma.InspectionTemplate.findUnique({
       where: { id: inspection.templateId },
@@ -355,11 +550,58 @@ async function getTemplateAndSections(inspection) {
         id: true,
         name: true,
         type: true,
+        deviceType: true,
         description: true,
         questions: true,
         isActive: true,
       },
     });
+  }
+
+  // If no template found and inspection has device, try to find template by device type
+  if (!template && inspection.deviceId) {
+    // Use device from inspection if already loaded, otherwise fetch it
+    let device = inspection.device;
+    
+    if (!device) {
+      device = await prisma.Device.findUnique({
+        where: { id: inspection.deviceId },
+        include: {
+          model: {
+            select: {
+              deviceType: true,
+            },
+          },
+        },
+      });
+    }
+
+    if (device) {
+      const deviceType = getDeviceType(device);
+      
+      if (deviceType) {
+        console.log(`[getTemplateAndSections] Looking for template with deviceType=${deviceType}, inspectionType=${inspection.type}`);
+        
+        template = await findTemplateByDeviceType(deviceType, inspection.type, true);
+        
+        if (template) {
+          console.log(`[getTemplateAndSections] Found template by deviceType: ${template.id.toString()} - ${template.name}`);
+          
+          // Update inspection with the found templateId if it wasn't set
+          if (!inspection.templateId) {
+            await prisma.Inspection.update({
+              where: { id: inspection.id },
+              data: { templateId: template.id },
+            });
+            console.log(`[getTemplateAndSections] Updated inspection ${inspection.id.toString()} with templateId ${template.id.toString()}`);
+          }
+        } else {
+          console.warn(`[getTemplateAndSections] No template found for deviceType=${deviceType}, inspectionType=${inspection.type}`);
+        }
+      } else {
+        console.warn(`[getTemplateAndSections] Could not determine deviceType for device ${inspection.deviceId?.toString()}`);
+      }
+    }
   }
 
   if (!template) {
@@ -396,10 +638,12 @@ router.get('/', authMiddleware, async (req, res) => {
     });
 
     // If not admin, show inspections from their organization OR assigned to them
+    // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
     if (currentUser?.role?.name !== 'admin') {
       whereClause.OR = [
         { orgId: BigInt(req.user.orgId) },
         { assignedTo: BigInt(req.user.id) },
+        { assignments: { some: { userId: BigInt(req.user.id) } } },
       ];
     }
 
@@ -415,6 +659,7 @@ router.get('/', authMiddleware, async (req, res) => {
               select: {
                 manufacturer: true,
                 model: true,
+                deviceType: true,
               },
             },
           },
@@ -430,6 +675,7 @@ router.get('/', authMiddleware, async (req, res) => {
             id: true,
             contractName: true,
             contractNumber: true,
+            endDate: true,
           },
         },
         template: {
@@ -437,6 +683,7 @@ router.get('/', authMiddleware, async (req, res) => {
             id: true,
             name: true,
             type: true,
+            deviceType: true,
           },
         },
         assignee: {
@@ -446,6 +693,17 @@ router.get('/', authMiddleware, async (req, res) => {
             email: true,
           },
         },
+        assignments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
         createdByUser: {
           select: {
             id: true,
@@ -453,7 +711,7 @@ router.get('/', authMiddleware, async (req, res) => {
           },
         },
       },
-      orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ createdAt: 'desc' }, { scheduledAt: 'asc' }],
     });
 
     const formattedInspections = inspections.map(inspection => ({
@@ -472,14 +730,7 @@ router.get('/', authMiddleware, async (req, res) => {
       progress: inspection.progress,
       assignedTo: inspection.assignedTo?.toString(),
       notes: inspection.notes,
-      device: inspection.device
-        ? {
-            id: inspection.device.id.toString(),
-            serialNumber: inspection.device.serialNumber,
-            assetTag: inspection.device.assetTag,
-            model: inspection.device.model,
-          }
-        : null,
+      device: formatDeviceInfo(inspection.device),
       site: inspection.site
         ? {
             id: inspection.site.id.toString(),
@@ -491,6 +742,7 @@ router.get('/', authMiddleware, async (req, res) => {
             id: inspection.contract.id.toString(),
             contractName: inspection.contract.contractName,
             contractNumber: inspection.contract.contractNumber,
+            endDate: inspection.contract.endDate,
           }
         : null,
       template: inspection.template
@@ -507,6 +759,11 @@ router.get('/', authMiddleware, async (req, res) => {
             email: inspection.assignee.email,
           }
         : null,
+      assignedUsers: inspection.assignments?.map(a => ({
+        id: a.user.id.toString(),
+        fullName: a.user.fullName,
+        email: a.user.email,
+      })) || [],
       createdByUser: inspection.createdByUser
         ? {
             id: inspection.createdByUser.id.toString(),
@@ -516,6 +773,8 @@ router.get('/', authMiddleware, async (req, res) => {
       createdAt: inspection.createdAt,
       updatedAt: inspection.updatedAt,
     }));
+
+    console.log(`[GET /api/inspections] Returning ${formattedInspections.length} inspections`);
 
     res.json({
       message: 'Inspections fetched successfully',
@@ -557,31 +816,105 @@ router.get('/by-schedule-type/:scheduleType', authMiddleware, async (req, res) =
     // Active statuses that should be shown in Flutter app
     const ACTIVE_STATUSES = ['DRAFT', 'IN_PROGRESS', 'SUBMITTED'];
     
+    const now = new Date();
+    
     const whereClause = {
       deletedAt: null,
       scheduleType: requestedScheduleType,
+      type: { not: 'MAINTENANCE' }, // Exclude repair assignments - they should only appear in "Томилолтын үзлэг"
       status: {
         in: ACTIVE_STATUSES,
       },
+      // Filter by date range: only show inspections where current date is between startedAt and completedAt
+      // If startedAt is null, don't filter by start date
+      // If completedAt is null, don't filter by end date
+      // If both are null, show the inspection (for backward compatibility)
+      OR: [
+        // Case 1: Both startedAt and completedAt are set - current date must be between them
+        {
+          AND: [
+            { startedAt: { not: null } },
+            { completedAt: { not: null } },
+            { startedAt: { lte: now } },
+            { completedAt: { gte: now } },
+          ],
+        },
+        // Case 2: Only startedAt is set - current date must be >= startedAt
+        {
+          AND: [
+            { startedAt: { not: null } },
+            { completedAt: null },
+            { startedAt: { lte: now } },
+          ],
+        },
+        // Case 3: Only completedAt is set - current date must be <= completedAt
+        {
+          AND: [
+            { startedAt: null },
+            { completedAt: { not: null } },
+            { completedAt: { gte: now } },
+          ],
+        },
+        // Case 4: Both are null - show inspection (for backward compatibility with old data)
+        {
+          AND: [
+            { startedAt: null },
+            { completedAt: null },
+          ],
+        },
+      ],
     };
 
     if (!isAdmin) {
-      // Only filter by assignedTo to support cross-organization assignments
+      // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
+      // to support cross-organization assignments
       // Remove orgId filter to allow users to see inspections assigned to them
       // from other organizations
-      whereClause.assignedTo = BigInt(req.user.id);
+      whereClause.AND = [
+        {
+          OR: [
+            { assignedTo: BigInt(req.user.id) },
+            { assignments: { some: { userId: BigInt(req.user.id) } } },
+          ],
+        },
+        {
+          OR: whereClause.OR,
+        },
+      ];
+      // Remove the OR from top level since it's now in AND
+      delete whereClause.OR;
     }
     
     console.log(`[GET /by-schedule-type/:scheduleType] Query:`, JSON.stringify({
       scheduleType: requestedScheduleType,
+      type: { not: 'MAINTENANCE' }, // Exclude repair assignments
       status: { in: ACTIVE_STATUSES },
       assignedTo: !isAdmin ? req.user.id : 'all users (admin)',
-      note: 'Cross-organization assignments are now supported'
+      assignments: !isAdmin ? { some: { userId: req.user.id } } : 'all users (admin)',
+      note: 'Cross-organization assignments are now supported. Multiple assignments via InspectionAssignment table are supported. Repair assignments (MAINTENANCE type) are excluded.'
     }, null, 2));
 
     const inspections = await prisma.Inspection.findMany({
       where: whereClause,
       include: {
+        assignee: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+        assignments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
         device: {
           select: {
             id: true,
@@ -594,6 +927,14 @@ router.get('/by-schedule-type/:scheduleType', authMiddleware, async (req, res) =
               },
             },
             metadata: true,
+            contract: {
+              select: {
+                id: true,
+                contractName: true,
+                contractNumber: true,
+                endDate: true,
+              },
+            },
           },
         },
         site: {
@@ -643,16 +984,18 @@ router.get('/by-schedule-type/:scheduleType', authMiddleware, async (req, res) =
       status: inspection.status,
       progress: inspection.progress,
       assignedTo: inspection.assignedTo?.toString(),
+      assignee: inspection.assignee ? {
+        id: inspection.assignee.id.toString(),
+        fullName: inspection.assignee.fullName,
+        email: inspection.assignee.email,
+      } : null,
+      assignedUsers: inspection.assignments?.map(a => ({
+        id: a.user.id.toString(),
+        fullName: a.user.fullName,
+        email: a.user.email,
+      })) || [],
       notes: inspection.notes,
-      device: inspection.device
-        ? {
-            id: inspection.device.id.toString(),
-            serialNumber: inspection.device.serialNumber,
-            assetTag: inspection.device.assetTag,
-            model: inspection.device.model,
-            metadata: inspection.device.metadata,
-          }
-        : null,
+      device: formatDeviceInfo(inspection.device),
       site: inspection.site
         ? {
             id: inspection.site.id.toString(),
@@ -664,6 +1007,7 @@ router.get('/by-schedule-type/:scheduleType', authMiddleware, async (req, res) =
             id: inspection.contract.id.toString(),
             contractName: inspection.contract.contractName,
             contractNumber: inspection.contract.contractNumber,
+            endDate: inspection.contract.endDate,
           }
         : null,
       template: inspection.template
@@ -748,6 +1092,530 @@ router.get('/assigned/type/:type', authMiddleware, async (req, res) => {
 });
 
 // =============================================================================
+// INCOMPLETE INSPECTIONS - RESUME FUNCTIONALITY
+// =============================================================================
+
+/**
+ * Get incomplete inspections for current user
+ * Returns inspections with status = 'IN_PROGRESS' in inspection_answers
+ */
+async function getIncompleteInspectionsForUser(userId, userOrgId, inspectionType = null) {
+  const userIdBigInt = BigInt(userId);
+  
+  // Find all incomplete answers (status = 'IN_PROGRESS')
+  const incompleteAnswers = await prisma.InspectionAnswer.findMany({
+    where: {
+      status: 'IN_PROGRESS',
+      answeredBy: userIdBigInt,
+    },
+    include: {
+      inspection: {
+        where: {
+          deletedAt: null,
+          OR: [
+            { assignedTo: userIdBigInt },
+            { assignments: { some: { userId: userIdBigInt } } },
+            { createdBy: userIdBigInt },
+            { orgId: BigInt(userOrgId) }
+          ]
+        },
+        include: {
+          device: {
+            select: {
+              id: true,
+              serialNumber: true,
+              assetTag: true,
+              model: {
+                select: {
+                  manufacturer: true,
+                  model: true,
+                  deviceType: true
+                }
+              }
+            }
+          },
+          site: {
+            select: {
+              id: true,
+              name: true
+            }
+          },
+          assignee: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true
+            }
+          },
+          createdByUser: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true
+            }
+          },
+          template: {
+            select: {
+              id: true,
+              name: true,
+              type: true
+            }
+          }
+        }
+      }
+    },
+    orderBy: {
+      answeredAt: 'desc'
+    }
+  });
+
+  // Group by inspectionId and keep only the latest answer for each inspection
+  const inspectionMap = new Map();
+  
+  incompleteAnswers.forEach(answer => {
+    if (answer.inspection) {
+      const inspectionId = answer.inspectionId.toString();
+      
+      // Filter by type if specified
+      if (inspectionType && answer.inspection.type !== inspectionType) {
+        return;
+      }
+      
+      // Keep only the latest answer for each inspection
+      if (!inspectionMap.has(inspectionId) || 
+          answer.answeredAt > inspectionMap.get(inspectionId).answer.answeredAt) {
+        inspectionMap.set(inspectionId, {
+          inspection: answer.inspection,
+          answer: answer
+        });
+      }
+    }
+  });
+
+  // Convert to array and add progress information
+  const result = [];
+  
+  for (const [inspectionId, data] of inspectionMap) {
+    const { inspection, answer } = data;
+    
+    // Get completed sections
+    const completedSections = await getCompletedSections(BigInt(inspectionId));
+    
+    // Check if signatures exist
+    const answerData = answer.answers || {};
+    const hasSignatures = answerData.signatures !== undefined;
+    
+    // Get template sections to calculate progress accurately
+    let sectionOrder = [];
+    let totalSections = 0;
+    let completedCount = 0;
+    let completedSectionNames = [];
+    let missingSections = [];
+    
+    try {
+      const { sections } = await getTemplateAndSections(inspection);
+      sectionOrder = Object.keys(sections).sort((a, b) => sections[a].order - sections[b].order);
+      
+      // Add signatures section if it exists in template or if signatures are present
+      if (!sectionOrder.includes('signatures') && hasSignatures) {
+        sectionOrder.push('signatures');
+      }
+      
+      // Calculate progress based on template sections
+      totalSections = sectionOrder.length;
+      completedSectionNames = completedSections.map(s => s.section);
+      if (hasSignatures && !completedSectionNames.includes('signatures')) {
+        completedSectionNames.push('signatures');
+      }
+      completedCount = completedSectionNames.length;
+      missingSections = sectionOrder.filter(s => !completedSectionNames.includes(s));
+    } catch (error) {
+      console.warn('Could not get template sections for progress calculation:', error.message);
+      // Fallback to hardcoded sections if template not found
+      const allSections = ['exterior', 'indicator', 'jbox', 'sensor', 'foundation', 'cleanliness', 'signatures'];
+      sectionOrder = allSections;
+      totalSections = allSections.length;
+      completedSectionNames = completedSections.map(s => s.section);
+      if (hasSignatures) completedSectionNames.push('signatures');
+      completedCount = completedSectionNames.length;
+      missingSections = allSections.filter(s => !completedSectionNames.includes(s));
+    }
+    
+    // Serialize nested objects to convert BigInt to string
+    const serializedDevice = inspection.device ? {
+      ...inspection.device,
+      id: inspection.device.id.toString(),
+      model: inspection.device.model ? {
+        ...inspection.device.model
+      } : null
+    } : null;
+
+    const serializedSite = inspection.site ? {
+      id: inspection.site.id.toString(),
+      name: inspection.site.name
+    } : null;
+
+    const serializedAssignee = inspection.assignee ? {
+      id: inspection.assignee.id.toString(),
+      fullName: inspection.assignee.fullName,
+      email: inspection.assignee.email
+    } : null;
+
+    const serializedCreatedByUser = inspection.createdByUser ? {
+      id: inspection.createdByUser.id.toString(),
+      fullName: inspection.createdByUser.fullName,
+      email: inspection.createdByUser.email
+    } : null;
+
+    const serializedTemplate = inspection.template ? {
+      id: inspection.template.id.toString(),
+      name: inspection.template.name,
+      type: inspection.template.type
+    } : null;
+
+    result.push({
+      inspection: {
+        id: inspection.id.toString(),
+        title: inspection.title,
+        type: inspection.type,
+        status: inspection.status,
+        assignedTo: inspection.assignedTo?.toString(),
+        createdBy: inspection.createdBy.toString(),
+        device: serializedDevice,
+        site: serializedSite,
+        assignee: serializedAssignee,
+        createdByUser: serializedCreatedByUser,
+        template: serializedTemplate
+      },
+      answer: {
+        id: answer.id.toString(),
+        status: answer.status,
+        answeredBy: answer.answeredBy?.toString(),
+        answeredAt: answer.answeredAt,
+        lastUpdatedAt: answer.updatedAt
+      },
+      progress: {
+        completedSections: completedCount,
+        totalSections: totalSections,
+        percentage: Math.round((completedCount / totalSections) * 100),
+        missingSections: missingSections,
+        completedSectionsList: completedSectionNames
+      }
+    });
+  }
+  
+  return result;
+}
+
+/**
+ * Get incomplete inspection status and resume data
+ */
+async function getIncompleteInspectionStatus(inspectionId, userId, userOrgId) {
+  const inspectionIdBigInt = BigInt(inspectionId);
+  const userIdBigInt = BigInt(userId);
+  
+  // Verify inspection access
+  const inspection = await verifyInspectionAccess(
+    inspectionIdBigInt,
+    userId,
+    userOrgId
+  );
+  
+  // Find incomplete answer (status = 'IN_PROGRESS')
+  const incompleteAnswer = await prisma.InspectionAnswer.findFirst({
+    where: {
+      inspectionId: inspectionIdBigInt,
+      status: 'IN_PROGRESS',
+      answeredBy: userIdBigInt
+    },
+    orderBy: {
+      answeredAt: 'desc'
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true
+        }
+      }
+    }
+  });
+  
+  if (!incompleteAnswer) {
+    return null;
+  }
+  
+  // Get completed sections
+  const completedSections = await getCompletedSections(inspectionIdBigInt);
+  
+  // Check if signatures exist
+  const answerData = incompleteAnswer.answers || {};
+  const hasSignatures = answerData.signatures !== undefined;
+  
+  // Get template to determine section order and calculate progress based on template
+  let sectionOrder = [];
+  let lastCompletedSection = null;
+  let nextSection = null;
+  let totalSections = 0;
+  let completedCount = 0;
+  let completedSectionNames = [];
+  let missingSections = [];
+  
+  try {
+    const { sections } = await getTemplateAndSections(inspection);
+    sectionOrder = Object.keys(sections).sort((a, b) => sections[a].order - sections[b].order);
+    
+    // Add signatures section if it exists in template or if signatures are present
+    if (!sectionOrder.includes('signatures') && hasSignatures) {
+      sectionOrder.push('signatures');
+    }
+    
+    // Calculate progress based on template sections (not hardcoded array)
+    totalSections = sectionOrder.length;
+    completedSectionNames = completedSections.map(s => s.section);
+    if (hasSignatures && !completedSectionNames.includes('signatures')) {
+      completedSectionNames.push('signatures');
+    }
+    completedCount = completedSectionNames.length;
+    missingSections = sectionOrder.filter(s => !completedSectionNames.includes(s));
+    
+    // Find last completed section
+    for (let i = sectionOrder.length - 1; i >= 0; i--) {
+      if (completedSectionNames.includes(sectionOrder[i])) {
+        lastCompletedSection = sectionOrder[i];
+        break;
+      }
+    }
+    
+    // Find next section to complete
+    if (lastCompletedSection) {
+      const lastIndex = sectionOrder.indexOf(lastCompletedSection);
+      if (lastIndex < sectionOrder.length - 1) {
+        nextSection = sectionOrder[lastIndex + 1];
+      }
+    } else if (sectionOrder.length > 0) {
+      nextSection = sectionOrder[0];
+    }
+  } catch (error) {
+    console.warn('Could not get template sections:', error.message);
+    // Fallback to hardcoded sections if template not found
+    const allSections = ['exterior', 'indicator', 'jbox', 'sensor', 'foundation', 'cleanliness', 'signatures'];
+    sectionOrder = allSections;
+    totalSections = allSections.length;
+    completedSectionNames = completedSections.map(s => s.section);
+    if (hasSignatures) completedSectionNames.push('signatures');
+    completedCount = completedSectionNames.length;
+    missingSections = allSections.filter(s => !completedSectionNames.includes(s));
+  }
+  
+  // Check user permissions
+  // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
+  const isInAssignments = inspection.assignments?.some(
+    assignment => assignment.userId?.toString() === userId
+  ) || false;
+  const canContinue = 
+    incompleteAnswer.answeredBy?.toString() === userId ||
+    inspection.assignedTo?.toString() === userId ||
+    isInAssignments ||
+    inspection.createdBy.toString() === userId;
+  
+  // Serialize user object to convert BigInt to string
+  const answeredByUser = incompleteAnswer.user ? {
+    id: incompleteAnswer.user.id.toString(),
+    fullName: incompleteAnswer.user.fullName,
+    email: incompleteAnswer.user.email
+  } : null;
+
+  return {
+    inspectionId: inspection.id.toString(),
+    isIncomplete: true,
+    status: incompleteAnswer.status,
+    answerId: incompleteAnswer.id.toString(),
+    answeredBy: incompleteAnswer.answeredBy?.toString(),
+    answeredByUser: answeredByUser,
+    lastAnsweredAt: incompleteAnswer.answeredAt,
+    progress: {
+      completedSections: completedCount,
+      totalSections: totalSections,
+      percentage: Math.round((completedCount / totalSections) * 100),
+      missingSections: missingSections,
+      completedSectionsList: completedSectionNames
+    },
+    lastCompletedSection: lastCompletedSection,
+    nextSection: nextSection,
+    sectionOrder: sectionOrder,
+    canContinue: canContinue,
+    reason: canContinue ? 'User has permission to continue this inspection' : 'User does not have permission'
+  };
+}
+
+// GET incomplete inspections for current user
+router.get('/incomplete', authMiddleware, async (req, res) => {
+  try {
+    const userId = BigInt(req.user.id);
+    const { type } = req.query;
+    
+    console.log(`[GET /incomplete] User ID: ${req.user.id}, Type: ${type || 'all'}`);
+    
+    const incompleteInspections = await getIncompleteInspectionsForUser(
+      req.user.id,
+      req.user.orgId,
+      type ? type.toUpperCase() : null
+    );
+    
+    console.log(`[GET /incomplete] Found ${incompleteInspections.length} incomplete inspections`);
+    
+    res.json({
+      message: 'Incomplete inspections fetched successfully',
+      data: incompleteInspections,
+      count: incompleteInspections.length,
+      total: incompleteInspections.length
+    });
+  } catch (error) {
+    console.error('[GET /incomplete] Error:', error);
+    handleError(res, error, 'fetch incomplete inspections');
+  }
+});
+
+// GET incomplete inspection status and resume data
+router.get('/:id/incomplete-status', authMiddleware, async (req, res) => {
+  try {
+    const inspectionId = BigInt(req.params.id);
+    
+    console.log(`[GET /:id/incomplete-status] Inspection ID: ${req.params.id}, User ID: ${req.user.id}`);
+    
+    const status = await getIncompleteInspectionStatus(
+      req.params.id,
+      req.user.id,
+      req.user.orgId
+    );
+    
+    if (!status) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'No incomplete inspection found for this inspection ID and user',
+        inspectionId: req.params.id
+      });
+    }
+    
+    res.json(
+      serializeBigInt({
+        message: 'Incomplete inspection status retrieved successfully',
+        data: status
+      })
+    );
+  } catch (error) {
+    console.error('[GET /:id/incomplete-status] Error:', error);
+    handleError(res, error, 'fetch incomplete inspection status');
+  }
+});
+
+// GET resume data for incomplete inspection (answers and current section)
+router.get('/:id/resume-data', authMiddleware, async (req, res) => {
+  try {
+    const inspectionId = BigInt(req.params.id);
+    
+    console.log(`[GET /:id/resume-data] Inspection ID: ${req.params.id}, User ID: ${req.user.id}`);
+    
+    // Verify inspection access
+    const inspection = await verifyInspectionAccess(
+      inspectionId,
+      req.user.id,
+      req.user.orgId
+    );
+    
+    // Get incomplete status
+    const status = await getIncompleteInspectionStatus(
+      req.params.id,
+      req.user.id,
+      req.user.orgId
+    );
+    
+    if (!status) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'No incomplete inspection found for this inspection ID and user',
+        inspectionId: req.params.id
+      });
+    }
+    
+    // Get the incomplete answer with all data
+    const incompleteAnswer = await prisma.InspectionAnswer.findUnique({
+      where: {
+        id: BigInt(status.answerId)
+      },
+      select: {
+        id: true,
+        answers: true,
+        status: true,
+        answeredBy: true,
+        answeredAt: true,
+        updatedAt: true
+      }
+    });
+    
+    if (!incompleteAnswer) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Answer record not found',
+        answerId: status.answerId
+      });
+    }
+    
+    // Get template sections
+    let sections = {};
+    let sectionOrder = [];
+    
+    try {
+      const templateInfo = await getTemplateAndSections(inspection);
+      sections = templateInfo.sections;
+      sectionOrder = Object.keys(sections).sort((a, b) => sections[a].order - sections[b].order);
+    } catch (error) {
+      console.warn('Could not get template sections:', error.message);
+    }
+    
+    // Extract answers by section
+    const answerData = incompleteAnswer.answers || {};
+    const sectionData = answerData.data || answerData;
+    
+    res.json(
+      serializeBigInt({
+        message: 'Resume data retrieved successfully',
+        data: {
+          inspection: {
+            id: inspection.id.toString(),
+            title: inspection.title,
+            type: inspection.type,
+            status: inspection.status
+          },
+          answer: {
+            id: incompleteAnswer.id.toString(),
+            status: incompleteAnswer.status,
+            answeredBy: incompleteAnswer.answeredBy?.toString(),
+            answeredAt: incompleteAnswer.answeredAt,
+            lastUpdatedAt: incompleteAnswer.updatedAt
+          },
+          answers: sectionData,
+          metadata: answerData.metadata || null,
+          remarks: answerData.remarks || null,
+          signatures: answerData.signatures || null,
+          progress: status.progress,
+          lastCompletedSection: status.lastCompletedSection,
+          nextSection: status.nextSection,
+          sectionOrder: sectionOrder,
+          sections: sections,
+          canContinue: status.canContinue
+        }
+      })
+    );
+  } catch (error) {
+    console.error('[GET /:id/resume-data] Error:', error);
+    handleError(res, error, 'fetch resume data');
+  }
+});
+
+// =============================================================================
 // SECTION BY SECTION INSPECTION FLOW
 // =============================================================================
 // GET inspection template with sections
@@ -772,29 +1640,26 @@ router.get('/:id/template', authMiddleware, async (req, res) => {
           assetTag: true,
           metadata: true,
           model: {
-            select: { id: true, manufacturer: true, model: true, specs: true },
+            select: { id: true, manufacturer: true, model: true, deviceType: true, specs: true },
           },
           organization: { select: { id: true, name: true, code: true } },
           site: { select: { id: true, name: true } },
         },
       });
 
-      if (device) {
-        deviceInfo = {
-          id: device.id.toString(),
-          serialNumber: device.serialNumber,
-          assetTag: device.assetTag,
-          location: device.metadata?.location || 'Тодорхойлогдоогүй',
-          model: { ...device.model, id: device.model?.id?.toString() },
-          organization: device.organization
-            ? { ...device.organization, id: device.organization.id.toString() }
-            : null,
-          site: device.site
-            ? { ...device.site, id: device.site.id.toString() }
-            : null,
-          metadata: device.metadata,
-        };
-      }
+      deviceInfo = formatDeviceInfo(device);
+    }
+
+    // Parse questions if it's a string to ensure Flutter app receives it as an array/object
+    // Also handle case where questions might already be parsed but wrapped in an extra array
+    let parsedQuestions = typeof template.questions === 'string'
+      ? JSON.parse(template.questions)
+      : template.questions;
+    
+    // If parsedQuestions is an array with a single element that is also an array, unwrap it
+    // This handles cases where questions was double-wrapped: [[{...}]] -> [{...}]
+    if (Array.isArray(parsedQuestions) && parsedQuestions.length === 1 && Array.isArray(parsedQuestions[0])) {
+      parsedQuestions = parsedQuestions[0];
     }
 
     return res.json({
@@ -806,7 +1671,7 @@ router.get('/:id/template', authMiddleware, async (req, res) => {
           title: inspection.title,
           type: inspection.type,
         },
-        template: { ...template, id: template.id.toString() },
+        template: { ...template, id: template.id.toString(), questions: parsedQuestions },
         device: deviceInfo,
         sections: sections,
         totalSections: Object.keys(sections).length,
@@ -1148,7 +2013,7 @@ router.get('/:id/section-status', authMiddleware, async (req, res) => {
     );
     const sectionAnswers = await prisma.InspectionAnswer.findMany({
       where: { inspectionId },
-      orderBy: { answeredAt: 'asc' },
+      orderBy: { answeredAt: 'desc' }, // Get latest first
       select: { id: true, answers: true, answeredBy: true, answeredAt: true },
     });
 
@@ -1202,7 +2067,7 @@ router.get('/:id/section-review/:section', authMiddleware, async (req, res) => {
 
     const allAnswers = await prisma.InspectionAnswer.findMany({
       where: { inspectionId: inspectionId },
-      orderBy: { answeredAt: 'asc' },
+      orderBy: { answeredAt: 'desc' }, // Get latest first
       select: { id: true, answers: true, answeredBy: true, answeredAt: true },
     });
 
@@ -1249,8 +2114,8 @@ router.get('/:id/section-review/:section', authMiddleware, async (req, res) => {
       });
     }
 
-    // Get the latest answer
-    const latestAnswer = sectionAnswers[sectionAnswers.length - 1];
+    // Get the latest answer (now first in array)
+    const latestAnswer = sectionAnswers[0];
     const answerData = latestAnswer.answers || {};
     const sectionData = (answerData.data || answerData)[section] || {};
 
@@ -1346,7 +2211,7 @@ router.get('/:id/section-answers', authMiddleware, async (req, res) => {
     );
     const sectionAnswers = await prisma.InspectionAnswer.findMany({
       where: { inspectionId },
-      orderBy: { answeredAt: 'asc' },
+      orderBy: { answeredAt: 'desc' }, // Get latest first
       select: {
         id: true,
         answers: true,
@@ -1458,7 +2323,7 @@ router.post('/:id/signatures', authMiddleware, async (req, res) => {
       req.user.orgId
     );
 
-    // Find the main inspection answer record
+    // Find the main inspection answer record (latest first)
     const mainAnswer = await prisma.InspectionAnswer.findFirst({
       where: {
         inspectionId,
@@ -1467,7 +2332,7 @@ router.post('/:id/signatures', authMiddleware, async (req, res) => {
           not: null,
         },
       },
-      orderBy: { answeredAt: 'asc' },
+      orderBy: { answeredAt: 'desc' }, // Get latest first
     });
 
     if (!mainAnswer) {
@@ -1491,10 +2356,11 @@ router.post('/:id/signatures', authMiddleware, async (req, res) => {
         answers: updatedAnswers,
         answeredBy: BigInt(req.user.id),
         answeredAt: new Date(),
+        status: 'COMPLETED',
       },
     });
 
-    console.log(`Updated main record ${updatedAnswer.id} with signatures`);
+    console.log(`Updated main record ${updatedAnswer.id} with signatures (status: COMPLETED)`);
 
     return res.json({
       message: 'Signatures saved successfully',
@@ -1561,12 +2427,14 @@ router.get('/:id/test-data', authMiddleware, async (req, res) => {
       select: { id: true, answers: true, answeredBy: true, answeredAt: true },
     });
 
-    // Extract remarks and signatures from all answers
+    // Extract remarks and signatures from all answers (latest first)
+    // Reverse array to process latest first
+    const reversedAnswers = [...answers].reverse();
     let extractedRemarks = null;
     let extractedSignatures = null;
     let extractedMetadata = null;
 
-    answers.forEach(answer => {
+    reversedAnswers.forEach(answer => {
       const answerData = answer.answers || {};
 
       // Check for metadata
@@ -1682,11 +2550,12 @@ router.post('/:id/signature-image', authMiddleware, async (req, res) => {
             answers: updatedAnswers,
             answeredBy: BigInt(req.user.id),
             answeredAt: new Date(),
+            status: 'COMPLETED',
           },
         });
 
         console.log(
-          `Updated target record ${updatedAnswer.id} with signature image`
+          `Updated target record ${updatedAnswer.id} with signature image (status: COMPLETED)`
         );
 
         return res.json({
@@ -1769,10 +2638,10 @@ router.post('/:id/signature-image', authMiddleware, async (req, res) => {
     );
 
     if (!mainAnswer) {
-      // Try to find any record for this inspection
+      // Try to find any record for this inspection (latest first)
       const anyAnswer = await prisma.InspectionAnswer.findFirst({
         where: { inspectionId },
-        orderBy: { answeredAt: 'asc' },
+        orderBy: { answeredAt: 'desc' }, // Get latest first
       });
 
       console.log(
@@ -1808,10 +2677,11 @@ router.post('/:id/signature-image', authMiddleware, async (req, res) => {
           answers: updatedAnswers,
           answeredBy: BigInt(req.user.id),
           answeredAt: new Date(),
+          status: 'COMPLETED',
         },
       });
 
-      console.log(`Updated record ${updatedAnswer.id} with signature image`);
+      console.log(`Updated record ${updatedAnswer.id} with signature image (status: COMPLETED)`);
 
       return res.json({
         message: 'Signature image saved successfully',
@@ -1869,10 +2739,11 @@ router.post('/:id/signature-image', authMiddleware, async (req, res) => {
         answers: updatedAnswers,
         answeredBy: BigInt(req.user.id),
         answeredAt: new Date(),
+        status: 'COMPLETED',
       },
     });
 
-    console.log(`Updated main record ${updatedAnswer.id} with signature image`);
+    console.log(`Updated main record ${updatedAnswer.id} with signature image (status: COMPLETED)`);
     console.log(
       '🔍 Final saved answers:',
       JSON.stringify(updatedAnswer.answers, null, 2)
@@ -1958,7 +2829,7 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
     console.log(`📦 Processing ${req.files.length} uploaded file(s)`);
     
     // Rename files to correct format: inspection_{id}_ans_{answerId}_field_{fieldId}_{timestamp}_{order}.jpg
-    const FTP_BASE_URL = process.env.FTP_BASE_URL || 'ftp://192.168.1.71';
+    const FTP_BASE_URL = process.env.FTP_BASE_URL || 'ftp://192.168.1.35';
     const FTP_REMOTE_PREFIX = process.env.FTP_REMOTE_PREFIX || 'test';
     const timestamp = Date.now();
     
@@ -1986,7 +2857,7 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
         continue;
       }
       
-      // Build FTP URL in format: ftp://192.168.0.6/test/{filename}
+      // Build FTP URL in format: ftp://192.168.1.35/test/{filename}
       const imageUrl = `${FTP_BASE_URL}/${FTP_REMOTE_PREFIX}/${newFileName}`;
 
       console.log(`  📸 Image ${i + 1}:`);
@@ -3052,146 +3923,7 @@ router.post('/section-answers', authMiddleware, async (req, res) => {
           )
       : res.status(200);
 
-    // Debug: Log completion status for email sending
-    console.log('📧 Email sending check:', {
-      isCompletion: serviceResult.isCompletion,
-      section: requestData.section,
-      status: requestData.status,
-      sectionStatus: requestData.sectionStatus,
-      isLastSection: serviceResult.isLastSection,
-      sectionOrder: serviceResult.sectionOrder,
-      currentSectionIndex: serviceResult.currentSectionIndex,
-    });
-
-    // Send email with DOCX report when inspection is completed
-    // Check if this is the signatures section and it's completed (final step)
-    // Also check if all main sections are completed
-    const isSignaturesCompleted = requestData.section === 'signatures' && 
-                                  (requestData.sectionStatus === 'COMPLETED' || requestData.progress === 100);
-    const allMainSectionsCompleted = completedSections.length >= 6; // exterior, indicator, jbox, sensor, foundation, cleanliness
-    
-    const shouldSendEmail = serviceResult.isCompletion || 
-      (isSignaturesCompleted && allMainSectionsCompleted);
-
-    if (shouldSendEmail) {
-      console.log('📧 Email sending triggered:', {
-        reason: serviceResult.isCompletion ? 'isCompletion=true' : 'signatures section completed with all main sections done',
-        isSignaturesCompleted,
-        allMainSectionsCompleted,
-        completedSectionsCount: completedSections.length,
-        completedSections: completedSections.map(s => s.section),
-      });
-      // Run email sending in background to avoid blocking the response
-      (async () => {
-        try {
-          console.log('📧 Preparing to send completion email with DOCX report...');
-          
-          // Get inspection with organization details
-          const inspection = await prisma.Inspection.findUnique({
-            where: { id: BigInt(requestData.inspectionId) },
-            select: {
-              id: true,
-              title: true,
-              organization: {
-                select: {
-                  id: true,
-                  name: true,
-                  contactEmail: true,
-                  contactName: true,
-                },
-              },
-            },
-          });
-
-          if (!inspection) {
-            console.warn('⚠️ Inspection not found for email sending');
-            return;
-          }
-
-          // Check if organization has contact email
-          if (!inspection.organization?.contactEmail) {
-            console.warn(`⚠️ Organization ${inspection.organization?.name || 'Unknown'} does not have contact_email configured. Skipping email.`);
-            return;
-          }
-
-          console.log(`📧 Generating DOCX report for inspection ${requestData.inspectionId}...`);
-          
-          // Generate DOCX report
-          const answerId = serviceResult.result.sectionAnswer.id;
-          const docxBuffer = await generateInspectionDocx(answerId);
-          
-          console.log(`📧 DOCX report generated (${docxBuffer.length} bytes). Sending email to ${inspection.organization.contactEmail}...`);
-
-          // Send email with DOCX attachment
-          await sendInspectionCompletionEmail({
-            to: inspection.organization.contactEmail,
-            organizationName: inspection.organization.name || 'Байгууллага',
-            inspectionTitle: inspection.title || `Үзлэг #${requestData.inspectionId}`,
-            inspectionId: requestData.inspectionId.toString(),
-            completedAt: serviceResult.result.sectionAnswer.answeredAt || new Date(),
-            contactName: inspection.organization.contactName || null,
-            docxBuffer: docxBuffer,
-          });
-
-          console.log(`✅ Completion email with DOCX report sent successfully to ${inspection.organization.contactEmail}`);
-        } catch (emailError) {
-          // Log error but don't fail the request
-          console.error('\n========================================');
-          console.error('❌ EMAIL SENDING FAILED');
-          console.error('========================================');
-          console.error('Inspection ID:', requestData.inspectionId);
-          console.error('Error Message:', emailError.message);
-          console.error('Error Code:', emailError.code || 'N/A');
-          console.error('Error Type:', emailError.name || 'Unknown');
-          
-          // Additional context
-          if (emailError.code === 'EAUTH') {
-            console.error('\n⚠️  AUTHENTICATION ERROR:');
-            console.error('   - Check NOTIFY_EMAIL_USER and NOTIFY_EMAIL_PASSWORD in config.env');
-            console.error('   - For Microsoft 365, use full email address as username');
-            console.error('   - If MFA is enabled, use App Password instead of regular password');
-          } else if (emailError.code === 'ECONNECTION') {
-            console.error('\n⚠️  CONNECTION ERROR:');
-            console.error('   - Check internet connection');
-            console.error('   - Check NOTIFY_EMAIL_HOST setting (should be smtp.office365.com)');
-            console.error('   - Check firewall settings (ports 587 or 465 should be open)');
-          } else if (emailError.code === 'ETIMEDOUT') {
-            console.error('\n⚠️  TIMEOUT ERROR:');
-            console.error('   - Check network connection');
-            console.error('   - Check firewall settings');
-            console.error('   - SMTP server might be slow or unreachable');
-          } else if (emailError.responseCode === 535) {
-            console.error('\n⚠️  MICROSOFT 365 AUTHENTICATION FAILED:');
-            if (emailError.response && emailError.response.includes('security defaults policy')) {
-              console.error('   - ERROR: User is locked by organization\'s Security Defaults policy');
-              console.error('   - SOLUTION: SMTP AUTH must be enabled for this mailbox');
-              console.error('   - Contact your administrator to enable SMTP AUTH');
-              console.error('   - Admin steps: Exchange Admin Center → Mailboxes → Select user → Mail → Enable "Authenticated SMTP"');
-            } else {
-              console.error('   - Invalid credentials');
-              console.error('   - Check if MFA is enabled - use App Password if needed');
-              console.error('   - Make sure you are using full email address as username');
-            }
-          } else if (emailError.responseCode === 550) {
-            console.error('\n⚠️  MICROSOFT 365 ERROR:');
-            console.error('   - Mailbox unavailable');
-            console.error('   - Recipient email might be invalid or rejected');
-          } else if (emailError.responseCode === 421) {
-            console.error('\n⚠️  MICROSOFT 365 SERVICE ERROR:');
-            console.error('   - Service temporarily unavailable');
-            console.error('   - Try again later');
-          }
-          
-          // Stack trace for debugging
-          if (process.env.NODE_ENV === 'development') {
-            console.error('\nStack Trace:');
-            console.error(emailError.stack);
-          }
-          
-          console.error('========================================\n');
-        }
-      })();
-    }
+    // Үзлэг дуусахад автоматаар mail илгээх болгосонгүй — зөвхөн admin web-ээс "Mail илгээх" товч дарсан үед илгээнэ.
 
     return responseBuilder.json({
       message: baseMessage,
@@ -3314,14 +4046,16 @@ router.get('/:id/devices', authMiddleware, async (req, res) => {
       sectionAnswersService.getTemplateSections(templateQuestions);
     const sectionAnswers = await prisma.InspectionAnswer.findMany({
       where: { inspectionId: inspectionId },
-      orderBy: { answeredAt: 'asc' },
+      orderBy: { answeredAt: 'desc' }, // Get latest first
     });
 
-    // Organize answers by section
+    // Organize answers by section (process latest first, so latest overwrites older)
     const organizedAnswers = {};
     let inspectionMetadata = null;
 
-    sectionAnswers.forEach(answer => {
+    // Reverse to process from oldest to newest (so latest overwrites)
+    const reversedAnswers = [...sectionAnswers].reverse();
+    reversedAnswers.forEach(answer => {
       const answerData = answer.answers || {};
 
       if (answerData.metadata && !inspectionMetadata) {
@@ -3505,11 +4239,15 @@ router.get('/devices', authMiddleware, async (req, res) => {
     const { status, siteId, modelId, search, page = 1, limit = 10 } = req.query;
 
     // Get device IDs from inspections assigned to this user (cross-organization support)
+    // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
     const assignedInspections = await prisma.Inspection.findMany({
       where: {
-        assignedTo: userId,
         deletedAt: null,
-        deviceId: { not: null }
+        deviceId: { not: null },
+        OR: [
+          { assignedTo: userId },
+          { assignments: { some: { userId: userId } } },
+        ],
       },
       select: { deviceId: true }
     });
@@ -3745,12 +4483,14 @@ router.get('/repairs-needed', authMiddleware, async (req, res) => {
     console.log('✅ [GET /api/inspections/repairs-needed] User found, orgId:', user.orgId.toString());
 
     // Get inspections accessible by user
+    // Check both assignedTo (legacy single assignment) and assignments (multiple assignments)
     console.log('🔍 [GET /api/inspections/repairs-needed] Fetching inspections...');
     const inspections = await prisma.Inspection.findMany({
       where: {
         OR: [
           { orgId: user.orgId },
-          { assignedTo: userId }
+          { assignedTo: userId },
+          { assignments: { some: { userId: userId } } },
         ],
         deletedAt: null,
       },
@@ -3801,13 +4541,13 @@ router.get('/repairs-needed', authMiddleware, async (req, res) => {
     for (const inspection of inspections) {
       const answers = await prisma.InspectionAnswer.findMany({
         where: { inspectionId: inspection.id },
-        orderBy: { answeredAt: 'asc' },
+        orderBy: { answeredAt: 'desc' }, // Get latest first
       });
 
       if (answers.length === 0) continue;
 
-      // Get latest answer
-      const latestAnswer = answers[answers.length - 1];
+      // Get latest answer (now first in array)
+      const latestAnswer = answers[0];
       const answerData = latestAnswer.answers || {};
 
       // Support multiple JSON structures
@@ -4024,51 +4764,16 @@ router.get('/:id', authMiddleware, async (req, res) => {
       req.user.id,
       req.user.orgId,
       {
-        id: true,
-        orgId: true,
-        deviceId: true,
-        siteId: true,
-        contractId: true,
-        templateId: true,
-        type: true,
-        title: true,
-        scheduleType: true,
-        scheduledAt: true,
-        startedAt: true,
-        completedAt: true,
-        status: true,
-        progress: true,
-        assignedTo: true,
-        createdBy: true,
-        notes: true,
-        createdAt: true,
-        updatedAt: true,
         device: {
-          select: {
-            id: true,
-            serialNumber: true,
-            assetTag: true,
-            metadata: true,
-            model: {
-              select: { id: true, manufacturer: true, model: true, specs: true },
-            },
-            organization: { select: { id: true, name: true, code: true } },
-            site: { select: { id: true, name: true } },
-            contract: {
-              select: {
-                id: true,
-                contractName: true,
-                contractNumber: true,
-              },
-            },
+          include: {
+            model: true,
+            organization: true,
+            site: true,
+            contract: true,
           },
         },
-        assignee: {
-          select: { id: true, fullName: true, email: true },
-        },
-        template: {
-          select: { id: true, name: true, type: true },
-        },
+        assignee: true,
+        template: true,
       }
     );
 
@@ -4092,38 +4797,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
       notes: inspection.notes,
       createdAt: inspection.createdAt,
       updatedAt: inspection.updatedAt,
-      device: inspection.device
-        ? {
-            id: inspection.device.id.toString(),
-            serialNumber: inspection.device.serialNumber,
-            assetTag: inspection.device.assetTag,
-            metadata: inspection.device.metadata,
-            model: inspection.device.model
-              ? {
-                  ...inspection.device.model,
-                  id: inspection.device.model.id.toString(),
-                }
-              : null,
-            organization: inspection.device.organization
-              ? {
-                  ...inspection.device.organization,
-                  id: inspection.device.organization.id.toString(),
-                }
-              : null,
-            site: inspection.device.site
-              ? {
-                  ...inspection.device.site,
-                  id: inspection.device.site.id.toString(),
-                }
-              : null,
-            contract: inspection.device.contract
-              ? {
-                  ...inspection.device.contract,
-                  id: inspection.device.contract.id.toString(),
-                }
-              : null,
-          }
-        : null,
+      device: formatDeviceInfo(inspection.device),
       assignee: inspection.assignee
         ? {
             id: inspection.assignee.id.toString(),
@@ -4139,10 +4813,12 @@ router.get('/:id', authMiddleware, async (req, res) => {
         : null,
     };
 
-    return res.json({
+    return res.json(
+      serializeBigInt({
       message: 'Inspection retrieved successfully',
       data: formatted,
-    });
+      })
+    );
   } catch (error) {
     handleError(res, error, 'fetch inspection by ID');
   }
@@ -4168,43 +4844,104 @@ router.post('/', authMiddleware, async (req, res) => {
       scheduleType,
       title,
       scheduledAt,
+      startedAt,
+      completedAt,
       notes,
     } = req.body;
 
     // Validation
-    if (!deviceId || !type || !title) {
+    // For INSTALLATION type, deviceId is optional
+    const normalizedType = type?.toUpperCase();
+    const isInstallation = normalizedType === 'INSTALLATION';
+    
+    if (!isInstallation && !deviceId) {
       return res.status(400).json({
         error: 'Validation failed',
-        message: 'Device, type, and title are required',
+        message: 'Device is required for non-installation inspections',
+      });
+    }
+    
+    if (!type || !title) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        message: 'Type and title are required',
       });
     }
 
-    // Verify device exists and get related data
-    const device = await prisma.Device.findUnique({
-      where: { id: BigInt(deviceId) },
-      include: {
-        organization: true,
-        site: true,
-        contract: true,
-      },
-    });
-
-    if (!device) {
-      return res.status(404).json({
-        error: 'Not found',
-        message: 'Device not found',
-      });
+    // For INSTALLATION type, orgId and contractId are required instead of deviceId
+    if (isInstallation) {
+      if (!orgId) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          message: 'Organization is required for installation inspections',
+        });
+      }
+      if (!contractId) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          message: 'Contract is required for installation inspections',
+        });
+      }
     }
 
-    // Use device's related data if not provided
-    const finalOrgId = orgId || device.orgId.toString();
-    const finalSiteId = siteId || device.siteId?.toString();
-    const finalContractId = contractId || device.contractId?.toString();
+    let device = null;
+    let finalOrgId = orgId;
+    let finalSiteId = siteId;
+    let finalContractId = contractId;
 
-    // Verify template if provided
-    if (templateId) {
+    // Only fetch device if deviceId is provided
+    if (deviceId) {
+      // Verify device exists and get related data including model's device_type
+      device = await prisma.Device.findUnique({
+        where: { id: BigInt(deviceId) },
+        include: {
+          organization: true,
+          site: true,
+          contract: true,
+          model: {
+            select: {
+              id: true,
+              manufacturer: true,
+              model: true,
+              deviceType: true,
+            },
+          },
+        },
+      });
+
+      if (!device) {
+        return res.status(404).json({
+          error: 'Not found',
+          message: 'Device not found',
+        });
+      }
+
+      // Use device's related data if not provided
+      finalOrgId = orgId || device.orgId.toString();
+      finalSiteId = siteId || device.siteId?.toString();
+      finalContractId = contractId || device.contractId?.toString();
+    }
+
+    // Get device type from device metadata or model (only if device exists)
+    const deviceType = device ? getDeviceType(device) : null;
+
+    // If templateId not provided, auto-select template based on device type
+    let finalTemplateId = templateId;
+    if (!finalTemplateId && deviceType && device) {
+      const autoTemplate = await findTemplateByDeviceType(deviceType, normalizedType, false);
+
+      if (autoTemplate) {
+        finalTemplateId = autoTemplate.id.toString();
+        console.log(`[POST /api/inspections] Auto-selected template ${finalTemplateId} for device type ${deviceType}`);
+      } else {
+        console.warn(`[POST /api/inspections] No template found for device type ${deviceType} and inspection type ${normalizedType}`);
+      }
+    }
+
+    // Verify template if provided or auto-selected
+    if (finalTemplateId) {
       const template = await prisma.InspectionTemplate.findUnique({
-        where: { id: BigInt(templateId) },
+        where: { id: BigInt(finalTemplateId) },
       });
 
       if (!template) {
@@ -4215,8 +4952,6 @@ router.post('/', authMiddleware, async (req, res) => {
       }
     }
 
-    // Normalize type to uppercase (Prisma enum requirement)
-    const normalizedType = type.toUpperCase();
     
     // Normalize scheduleType - handle empty strings and undefined/null properly
     // Only default to 'SCHEDULED' if scheduleType is truly not provided
@@ -4243,18 +4978,82 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
+    // Validate inspection dates are within contract date range
+    // Check if device has a contract OR if contractId is provided
+    let contractToCheck = device.contract;
+    
+    // If contractId is provided but device.contract is not loaded, fetch it
+    if (!contractToCheck && finalContractId) {
+      const contract = await prisma.Contract.findUnique({
+        where: { id: BigInt(finalContractId) },
+      });
+      contractToCheck = contract;
+    }
+    
+    if (contractToCheck) {
+      const contractStartDate = contractToCheck.startDate;
+      const contractEndDate = contractToCheck.endDate;
+      
+      console.log(`[POST /api/inspections] Contract dates - startDate: ${contractStartDate}, endDate: ${contractEndDate}`);
+      console.log(`[POST /api/inspections] Inspection dates - startedAt: ${startedAt}, completedAt: ${completedAt}`);
+      
+      if (contractStartDate && contractEndDate) {
+        // Validate startedAt and completedAt for ALL inspections (DAILY and SCHEDULED)
+        if (startedAt && completedAt) {
+          const inspectionStartDate = new Date(startedAt);
+          const inspectionEndDate = new Date(completedAt);
+          
+          console.log(`[POST /api/inspections] Validating dates...`);
+          console.log(`  - inspectionStartDate: ${inspectionStartDate.toISOString()}`);
+          console.log(`  - inspectionEndDate: ${inspectionEndDate.toISOString()}`);
+          console.log(`  - contractStartDate: ${contractStartDate.toISOString()}`);
+          console.log(`  - contractEndDate: ${contractEndDate.toISOString()}`);
+          
+          // Check if end date is after start date
+          if (inspectionEndDate < inspectionStartDate) {
+            return res.status(400).json({
+              error: 'Validation failed',
+              message: 'Дуусах огноо эхлэх огнооноос өмнө байж болохгүй',
+            });
+          }
+          
+          // Check if inspection dates are within contract date range
+          if (inspectionStartDate < contractStartDate || inspectionEndDate > contractEndDate) {
+            return res.status(400).json({
+              error: 'Validation failed',
+              message: `Үзлэгийн хугацаа гэрээний хугацааны дотор байх ёстой. Гэрээний хугацаа: ${contractStartDate.toISOString().split('T')[0]} - ${contractEndDate.toISOString().split('T')[0]}`,
+            });
+          }
+          
+          console.log(`[POST /api/inspections] ✅ Date validation passed`);
+        } else if (normalizedScheduleType === 'DAILY') {
+          // For DAILY inspections, startedAt and completedAt are required
+          return res.status(400).json({
+            error: 'Validation failed',
+            message: 'Өдөр тутмын үзлэгийн хувьд эхлэх болон дуусах огноо заавал шаардлагатай',
+          });
+        }
+      } else {
+        console.log(`[POST /api/inspections] Contract exists but startDate or endDate is missing`);
+      }
+    } else {
+      console.log(`[POST /api/inspections] No contract found for validation`);
+    }
+
     // Create inspection
     const inspection = await prisma.Inspection.create({
       data: {
         orgId: BigInt(finalOrgId),
-        deviceId: BigInt(deviceId),
+        deviceId: deviceId ? BigInt(deviceId) : null, // Optional for INSTALLATION type
         siteId: finalSiteId ? BigInt(finalSiteId) : null,
         contractId: finalContractId ? BigInt(finalContractId) : null,
-        templateId: templateId ? BigInt(templateId) : null,
+        templateId: finalTemplateId ? BigInt(finalTemplateId) : null,
         type: normalizedType,
         scheduleType: normalizedScheduleType,
         title: title,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        startedAt: startedAt ? new Date(startedAt) : null,
+        completedAt: completedAt ? new Date(completedAt) : null,
         status: 'DRAFT',
         progress: 0,
         createdBy: BigInt(req.user.id),
@@ -4266,6 +5065,14 @@ router.post('/', authMiddleware, async (req, res) => {
             id: true,
             serialNumber: true,
             assetTag: true,
+            model: {
+              select: {
+                id: true,
+                manufacturer: true,
+                model: true,
+                deviceType: true,
+              },
+            },
           },
         },
         site: {
@@ -4279,6 +5086,7 @@ router.post('/', authMiddleware, async (req, res) => {
             id: true,
             name: true,
             type: true,
+            deviceType: true,
           },
         },
       },
@@ -4305,6 +5113,12 @@ router.post('/', authMiddleware, async (req, res) => {
               id: inspection.device.id.toString(),
               serialNumber: inspection.device.serialNumber,
               assetTag: inspection.device.assetTag,
+              model: inspection.device.model ? {
+                id: inspection.device.model.id.toString(),
+                manufacturer: inspection.device.model.manufacturer,
+                model: inspection.device.model.model,
+                deviceType: inspection.device.model.deviceType,
+              } : null,
             }
           : null,
         site: inspection.site
@@ -4318,6 +5132,7 @@ router.post('/', authMiddleware, async (req, res) => {
               id: inspection.template.id.toString(),
               name: inspection.template.name,
               type: inspection.template.type,
+              deviceType: inspection.template.deviceType,
             }
           : null,
         createdAt: inspection.createdAt,
@@ -4343,13 +5158,32 @@ router.post('/', authMiddleware, async (req, res) => {
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, scheduledAt, notes, status, scheduleType } = req.body;
+    const { 
+      title, 
+      scheduledAt, 
+      startedAt, 
+      completedAt, 
+      notes, 
+      status, 
+      scheduleType,
+      deviceId,
+      templateId,
+      contractId,
+      siteId,
+    } = req.body;
 
     // Check if inspection exists
     const inspection = await prisma.Inspection.findFirst({
       where: {
         id: BigInt(id),
         deletedAt: null,
+      },
+      include: {
+        device: {
+          include: {
+            contract: true,
+          },
+        },
       },
     });
 
@@ -4365,8 +5199,225 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (title !== undefined) updateData.title = title;
     if (scheduledAt !== undefined)
       updateData.scheduledAt = scheduledAt ? new Date(scheduledAt) : null;
+    if (startedAt !== undefined)
+      updateData.startedAt = startedAt ? new Date(startedAt) : null;
+    if (completedAt !== undefined)
+      updateData.completedAt = completedAt ? new Date(completedAt) : null;
     if (notes !== undefined) updateData.notes = notes;
-    if (status !== undefined) updateData.status = status;
+    if (status !== undefined) {
+      // Normalize status to uppercase to match Prisma enum (DRAFT, IN_PROGRESS, SUBMITTED, APPROVED, REJECTED, CANCELED)
+      const normalizedStatus = status.toUpperCase();
+      const allowedStatuses = ['DRAFT', 'IN_PROGRESS', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELED'];
+      if (!allowedStatuses.includes(normalizedStatus)) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          message: `status must be one of: ${allowedStatuses.join(', ')}`,
+        });
+      }
+      updateData.status = normalizedStatus;
+    }
+
+    // Handle deviceId update
+    if (deviceId !== undefined) {
+      if (deviceId === null || deviceId === '') {
+        updateData.deviceId = null;
+        // If device is removed, also remove contractId if it was linked to that device
+        if (inspection.deviceId && inspection.contractId) {
+          const oldDevice = await prisma.Device.findUnique({
+            where: { id: inspection.deviceId },
+            select: { contractId: true },
+          });
+          if (oldDevice?.contractId?.toString() === inspection.contractId?.toString()) {
+            updateData.contractId = null;
+          }
+        }
+      } else {
+        // Verify device exists
+        const device = await prisma.Device.findUnique({
+          where: { id: BigInt(deviceId) },
+          include: {
+            organization: true,
+            site: true,
+            contract: true,
+            model: {
+              select: {
+                id: true,
+                manufacturer: true,
+                model: true,
+                deviceType: true,
+              },
+            },
+          },
+        });
+
+        if (!device) {
+          return res.status(404).json({
+            error: 'Not found',
+            message: 'Device not found',
+          });
+        }
+
+        // Verify device belongs to same organization
+        if (device.orgId.toString() !== inspection.orgId.toString()) {
+          return res.status(400).json({
+            error: 'Validation failed',
+            message: 'Device must belong to the same organization as the inspection',
+          });
+        }
+
+        updateData.deviceId = BigInt(deviceId);
+        
+        // Auto-update siteId and contractId from device if not explicitly provided
+        if (siteId === undefined && device.siteId) {
+          updateData.siteId = device.siteId;
+        }
+        if (contractId === undefined && device.contractId) {
+          updateData.contractId = device.contractId;
+        }
+
+        // Auto-select template based on device type if templateId is not explicitly provided
+        // This is especially useful for repair assignments where device info is added later
+        if (templateId === undefined && inspection.templateId === null) {
+          // Use the device we already fetched (it includes model)
+          if (device) {
+            const deviceType = getDeviceType(device);
+            
+            if (deviceType) {
+              console.log(`[PUT /api/inspections/:id] Auto-selecting template for device type ${deviceType}, inspection type ${inspection.type}`);
+              
+              const autoTemplate = await findTemplateByDeviceType(
+                deviceType,
+                inspection.type,
+                false // Don't fallback to deviceType-only, require exact match
+              );
+              
+              if (autoTemplate) {
+                updateData.templateId = autoTemplate.id;
+                console.log(`[PUT /api/inspections/:id] Auto-selected template ${autoTemplate.id.toString()} (${autoTemplate.name}) for device type ${deviceType}`);
+              } else {
+                console.warn(`[PUT /api/inspections/:id] No template found for device type ${deviceType} and inspection type ${inspection.type}`);
+              }
+            } else {
+              console.warn(`[PUT /api/inspections/:id] Could not determine device type for device ${deviceId}`);
+            }
+          }
+        }
+      }
+    }
+
+    // Handle templateId update
+    if (templateId !== undefined) {
+      if (templateId === null || templateId === '') {
+        updateData.templateId = null;
+      } else {
+        // Verify template exists
+        const template = await prisma.InspectionTemplate.findUnique({
+          where: { id: BigInt(templateId) },
+        });
+
+        if (!template) {
+          return res.status(404).json({
+            error: 'Not found',
+            message: 'Template not found',
+          });
+        }
+
+        // Verify template type matches inspection type
+        if (template.type !== inspection.type) {
+          return res.status(400).json({
+            error: 'Validation failed',
+            message: `Template type (${template.type}) must match inspection type (${inspection.type})`,
+          });
+        }
+
+        updateData.templateId = BigInt(templateId);
+      }
+    }
+
+    // Handle contractId update
+    if (contractId !== undefined) {
+      if (contractId === null || contractId === '') {
+        updateData.contractId = null;
+      } else {
+        // Verify contract exists
+        const contract = await prisma.Contract.findUnique({
+          where: { id: BigInt(contractId) },
+        });
+
+        if (!contract) {
+          return res.status(404).json({
+            error: 'Not found',
+            message: 'Contract not found',
+          });
+        }
+
+        // Verify contract belongs to same organization
+        if (contract.orgId.toString() !== inspection.orgId.toString()) {
+          return res.status(400).json({
+            error: 'Validation failed',
+            message: 'Contract must belong to the same organization as the inspection',
+          });
+        }
+
+        updateData.contractId = BigInt(contractId);
+      }
+    }
+
+    // Handle siteId update
+    if (siteId !== undefined) {
+      if (siteId === null || siteId === '') {
+        updateData.siteId = null;
+      } else {
+        // Verify site exists
+        const site = await prisma.Site.findUnique({
+          where: { id: BigInt(siteId) },
+        });
+
+        if (!site) {
+          return res.status(404).json({
+            error: 'Not found',
+            message: 'Site not found',
+          });
+        }
+
+        // Verify site belongs to same organization
+        if (site.orgId.toString() !== inspection.orgId.toString()) {
+          return res.status(400).json({
+            error: 'Validation failed',
+            message: 'Site must belong to the same organization as the inspection',
+          });
+        }
+
+        updateData.siteId = BigInt(siteId);
+      }
+    }
+    
+    // Validate inspection dates are within contract date range (for updates)
+    if ((startedAt !== undefined || completedAt !== undefined) && inspection.device?.contract) {
+      const contractStartDate = inspection.device.contract.startDate;
+      const contractEndDate = inspection.device.contract.endDate;
+      
+      if (contractStartDate && contractEndDate) {
+        const inspectionStartDate = updateData.startedAt || inspection.startedAt;
+        const inspectionEndDate = updateData.completedAt || inspection.completedAt;
+        
+        if (inspectionStartDate && inspectionEndDate) {
+          if (inspectionStartDate < contractStartDate || inspectionEndDate > contractEndDate) {
+            return res.status(400).json({
+              error: 'Validation failed',
+              message: `Үзлэгийн хугацаа гэрээний хугацааны дотор байх ёстой. Гэрээний хугацаа: ${contractStartDate.toISOString().split('T')[0]} - ${contractEndDate.toISOString().split('T')[0]}`,
+            });
+          }
+          
+          if (inspectionEndDate < inspectionStartDate) {
+            return res.status(400).json({
+              error: 'Validation failed',
+              message: 'Дуусах огноо эхлэх огнооноос өмнө байж болохгүй',
+            });
+          }
+        }
+      }
+    }
     if (scheduleType !== undefined) {
       const normalizedScheduleType = scheduleType.toUpperCase();
       const allowedScheduleTypes = ['DAILY', 'SCHEDULED'];
@@ -4390,6 +5441,15 @@ router.put('/:id', authMiddleware, async (req, res) => {
             id: true,
             serialNumber: true,
             assetTag: true,
+            metadata: true,
+            model: {
+              select: {
+                id: true,
+                manufacturer: true,
+                model: true,
+                deviceType: true,
+              },
+            },
           },
         },
         site: {
@@ -4398,10 +5458,19 @@ router.put('/:id', authMiddleware, async (req, res) => {
             name: true,
           },
         },
+        contract: {
+          select: {
+            id: true,
+            contractName: true,
+            contractNumber: true,
+          },
+        },
         template: {
           select: {
             id: true,
             name: true,
+            type: true,
+            deviceType: true,
           },
         },
       },
@@ -4427,6 +5496,22 @@ router.put('/:id', authMiddleware, async (req, res) => {
               id: updatedInspection.device.id.toString(),
               serialNumber: updatedInspection.device.serialNumber,
               assetTag: updatedInspection.device.assetTag,
+              metadata: updatedInspection.device.metadata,
+              model: updatedInspection.device.model
+                ? {
+                    id: updatedInspection.device.model.id.toString(),
+                    manufacturer: updatedInspection.device.model.manufacturer,
+                    model: updatedInspection.device.model.model,
+                    deviceType: updatedInspection.device.model.deviceType,
+                  }
+                : null,
+            }
+          : null,
+        contract: updatedInspection.contract
+          ? {
+              id: updatedInspection.contract.id.toString(),
+              contractName: updatedInspection.contract.contractName,
+              contractNumber: updatedInspection.contract.contractNumber,
             }
           : null,
         site: updatedInspection.site
@@ -4439,6 +5524,8 @@ router.put('/:id', authMiddleware, async (req, res) => {
           ? {
               id: updatedInspection.template.id.toString(),
               name: updatedInspection.template.name,
+              type: updatedInspection.template.type,
+              deviceType: updatedInspection.template.deviceType,
             }
           : null,
         updatedAt: updatedInspection.updatedAt,
@@ -4484,39 +5571,122 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     console.log(`✅ Inspection found: ${inspection.title} (ID=${id})`);
 
     // Hard delete - permanently remove from database
-    // First, delete related inspection_question_images (raw SQL table)
+    // Delete in the correct order to avoid foreign key constraint violations
+    
+    // Step 1: Delete related RepairImages (they have foreign key to Repair)
+    console.log(`🗑️ Step 1: Deleting repair images for inspection ${id}...`);
     try {
-      // Check if inspection_question_images table exists
-      const tableCheck = await prisma.$queryRaw`
-        SELECT COUNT(*) as count
-        FROM information_schema.tables
-        WHERE table_schema = DATABASE()
-        AND table_name = 'inspection_question_images'
-      `;
+      const repairImages = await prisma.RepairImage.findMany({
+        where: {
+          repair: {
+            inspectionId: BigInt(id),
+          },
+        },
+        select: { id: true },
+      });
       
-      const tableExists = tableCheck?.[0]?.count > 0;
-      
-      if (tableExists) {
-        console.log(`🗑️ Deleting related images from inspection_question_images for inspection ${id}...`);
+      if (repairImages.length > 0) {
+        const repairImageIds = repairImages.map(img => img.id);
+        await prisma.RepairImage.deleteMany({
+          where: {
+            id: { in: repairImageIds },
+          },
+        });
+        console.log(`✅ Deleted ${repairImages.length} repair image(s)`);
+      } else {
+        console.log(`ℹ️  No repair images found for inspection ${id}`);
+      }
+    } catch (repairImageError) {
+      console.error('⚠️ Error deleting repair images (non-critical):', repairImageError.message);
+    }
+
+    // Step 2: Delete related Repairs
+    console.log(`🗑️ Step 2: Deleting repairs for inspection ${id}...`);
+    try {
+      const deleteRepairsResult = await prisma.Repair.deleteMany({
+        where: {
+          inspectionId: BigInt(id),
+        },
+      });
+      console.log(`✅ Deleted ${deleteRepairsResult.count} repair(s) for inspection ${id}`);
+    } catch (repairError) {
+      console.error('⚠️ Error deleting repairs (non-critical):', repairError.message);
+      // Continue even if repair deletion fails - might not exist
+    }
+
+    // Step 3: Delete related inspection_question_images (using answer_id, not inspection_id)
+    console.log(`🗑️ Step 3: Deleting inspection question images for inspection ${id}...`);
+    try {
+      // First, get all answer_ids for this inspection
+      const answers = await prisma.InspectionAnswer.findMany({
+        where: { inspectionId: BigInt(id) },
+        select: { id: true },
+      });
+
+      if (answers.length > 0) {
+        const answerIds = answers.map(a => a.id);
         
-        // Delete images using inspection_id directly
-        const deleteResult = await prisma.$executeRaw`
-          DELETE FROM inspection_question_images
-          WHERE inspection_id = ${BigInt(id)}
+        // Check if inspection_question_images table exists
+        const tableCheck = await prisma.$queryRaw`
+          SELECT COUNT(*) as count
+          FROM information_schema.tables
+          WHERE table_schema = DATABASE()
+          AND table_name = 'inspection_question_images'
         `;
         
-        console.log(`✅ Deleted images from inspection_question_images for inspection ${id} (affected rows: ${deleteResult})`);
+        const tableExists = tableCheck?.[0]?.count > 0;
+        
+        if (tableExists) {
+          // Delete images using answer_id (correct column name)
+          // Delete for each answer_id to avoid SQL injection and handle BigInt correctly
+          let totalDeleted = 0;
+          for (const answerId of answerIds) {
+            const deleteResult = await prisma.$executeRaw`
+              DELETE FROM inspection_question_images
+              WHERE answer_id = ${answerId}
+            `;
+            totalDeleted += deleteResult;
+          }
+          
+          console.log(`✅ Deleted images from inspection_question_images for inspection ${id} (affected rows: ${totalDeleted})`);
+        } else {
+          console.log(`⚠️ inspection_question_images table does not exist, skipping image deletion`);
+        }
       } else {
-        console.log(`⚠️ inspection_question_images table does not exist, skipping image deletion`);
+        console.log(`ℹ️  No inspection answers found for inspection ${id}, skipping image deletion`);
       }
     } catch (imageError) {
       console.error('⚠️ Error deleting inspection_question_images (non-critical):', imageError.message);
       // Continue with inspection deletion even if image deletion fails
     }
 
-    // Hard delete the inspection
+    // Step 3b: Delete FTP storage files for this inspection (inspection_{id}_ans_*)
+    console.log(`🗑️ Step 3b: Deleting FTP storage images for inspection ${id}...`);
+    try {
+      const prefix = `inspection_${id}_`;
+      const files = await fsPromises.readdir(FTP_STORAGE_PATH);
+      const toDelete = files.filter((f) => f.startsWith(prefix));
+      for (const file of toDelete) {
+        const filePath = path.join(FTP_STORAGE_PATH, file);
+        try {
+          await fsPromises.unlink(filePath);
+          console.log(`  ✅ Deleted FTP file: ${file}`);
+        } catch (unlinkErr) {
+          console.warn(`  ⚠️ Could not delete ${filePath}:`, unlinkErr.message);
+        }
+      }
+      if (toDelete.length > 0) {
+        console.log(`✅ Deleted ${toDelete.length} FTP file(s) for inspection ${id}`);
+      } else {
+        console.log(`ℹ️  No FTP files found matching ${prefix}*`);
+      }
+    } catch (ftpErr) {
+      console.error('⚠️ Error deleting FTP inspection images (non-critical):', ftpErr.message);
+    }
+
+    // Step 4: Hard delete the inspection
     // This will cascade delete InspectionAnswer, InspectionQuestionAnswer, and Attachment records
-    console.log(`🗑️ Attempting to hard delete inspection: ${inspection.title} (ID=${id})`);
+    console.log(`🗑️ Step 4: Attempting to hard delete inspection: ${inspection.title} (ID=${id})`);
     const deletedInspection = await prisma.Inspection.delete({
       where: { id: BigInt(id) },
     });
@@ -4548,15 +5718,17 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 });
 
 /**
- * PUT /api/inspections/:id/assign
- * Assign an inspection to a user
+ * PUT /api/inspections/site/:siteId/assign
+ * Assign all inspections in a site to a user
+ * This is used for repair assignment - assigning site inspections makes repairs visible to user
+ * IMPORTANT: This route must be registered BEFORE /:id/assign route to avoid route conflicts
  */
-router.put('/:id/assign', authMiddleware, async (req, res) => {
+router.put('/site/:siteId/assign', authMiddleware, async (req, res) => {
   try {
-    const { id } = req.params;
+    const { siteId } = req.params;
     const { userId } = req.body;
 
-    console.log(`Assigning inspection ${id} to user ${userId}`);
+    console.log(`[PUT /site/:siteId/assign] Assigning site ${siteId} inspections to user ${userId}`);
 
     // Validate userId
     if (!userId) {
@@ -4566,19 +5738,45 @@ router.put('/:id/assign', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if inspection exists
-    const inspection = await prisma.Inspection.findFirst({
-      where: {
-        id: BigInt(id),
-        deletedAt: null,
+    // Check if site exists
+    const site = await prisma.Site.findUnique({
+      where: { id: BigInt(siteId) },
+      include: {
+        _count: {
+          select: {
+            inspections: true,
+          },
+        },
       },
     });
 
-    if (!inspection) {
+    if (!site) {
+      console.error(`[PUT /site/:siteId/assign] Site ${siteId} not found`);
       return res.status(404).json({
-        error: 'Inspection not found',
-        message: 'Inspection not found',
+        error: 'Site not found',
+        message: 'Site not found',
       });
+    }
+
+    console.log(`[PUT /site/:siteId/assign] Site found: ${site.name} (ID: ${site.id.toString()}), orgId: ${site.orgId.toString()}, total inspections in relation: ${site._count.inspections}`);
+
+    // Also check inspections by organization and site name (in case siteId is null in some inspections)
+    const inspectionsByOrg = await prisma.Inspection.findMany({
+      where: {
+        orgId: site.orgId,
+        siteId: null, // Check if there are inspections with null siteId
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+      },
+      take: 5,
+    });
+
+    if (inspectionsByOrg.length > 0) {
+      console.log(`[PUT /site/:siteId/assign] WARNING: Found ${inspectionsByOrg.length} inspection(s) with null siteId but matching orgId ${site.orgId.toString()}`);
     }
 
     // Check if target user exists and is active
@@ -4597,36 +5795,738 @@ router.put('/:id/assign', authMiddleware, async (req, res) => {
       });
     }
 
-    // Optionally verify user belongs to same organization as inspection
-    // (commented out to allow admin to assign across organizations)
-    // if (targetUser.orgId !== inspection.orgId) {
-    //   return res.status(400).json({
-    //     error: 'Invalid assignment',
-    //     message: 'User must belong to the same organization as the inspection',
-    //   });
-    // }
-
-    // Update inspection assignee
-    // DRAFT status is fine - it will be shown in Flutter app
-    // We don't change status when assigning, keep the current status
-    console.log(`[PUT /:id/assign] Current inspection status: ${inspection.status}`);
-    console.log(`[PUT /:id/assign] Assigning to user ${userId}, keeping status as ${inspection.status}`);
-    
-    const updatedInspection = await prisma.Inspection.update({
-      where: { id: BigInt(id) },
-      data: {
-        assignedTo: BigInt(userId),
-        updatedBy: BigInt(req.user.id),
-        // Keep current status - DRAFT status is fine and will be shown in Flutter app
+    // Debug: Check all inspections for this site (including deleted ones)
+    const allInspections = await prisma.Inspection.findMany({
+      where: {
+        siteId: BigInt(siteId),
       },
-      include: {
-        assignee: {
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        deletedAt: true,
+        assignedTo: true,
+        type: true,
+      },
+    });
+
+    console.log(`[PUT /site/:siteId/assign] DEBUG: Found ${allInspections.length} total inspection(s) for site ${siteId} (including deleted)`);
+    if (allInspections.length > 0) {
+      console.log(`[PUT /site/:siteId/assign] DEBUG: Sample inspections:`, allInspections.slice(0, 3).map(i => ({
+        id: i.id.toString(),
+        title: i.title,
+        status: i.status,
+        deletedAt: i.deletedAt,
+        assignedTo: i.assignedTo?.toString(),
+        type: i.type,
+      })));
+    }
+
+    // Find all inspections for this site that are not deleted
+    // First try direct siteId match
+    let inspections = await prisma.Inspection.findMany({
+      where: {
+        siteId: BigInt(siteId),
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        assignedTo: true,
+        type: true,
+        deviceId: true,
+      },
+    });
+
+    console.log(`[PUT /site/:siteId/assign] Found ${inspections.length} active (non-deleted) inspection(s) with direct siteId=${siteId}`);
+
+    // If no inspections found with direct siteId, try finding inspections through devices in this site
+    if (inspections.length === 0) {
+      console.log(`[PUT /site/:siteId/assign] No inspections with direct siteId, checking through devices...`);
+      
+      // Find devices in this site
+      const devicesInSite = await prisma.Device.findMany({
+        where: {
+          siteId: BigInt(siteId),
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      console.log(`[PUT /site/:siteId/assign] Found ${devicesInSite.length} device(s) in site ${siteId}`);
+
+      if (devicesInSite.length > 0) {
+        const deviceIds = devicesInSite.map(d => d.id);
+        console.log(`[PUT /site/:siteId/assign] Device IDs in site:`, deviceIds.map(id => id.toString()));
+        
+        // Debug: Check all inspections for these devices (including deleted)
+        const allDeviceInspections = await prisma.Inspection.findMany({
+          where: {
+            deviceId: {
+              in: deviceIds,
+            },
+          },
           select: {
             id: true,
-            fullName: true,
-            email: true,
+            title: true,
+            status: true,
+            deviceId: true,
+            siteId: true,
+            orgId: true,
+            deletedAt: true,
+          },
+        });
+        console.log(`[PUT /site/:siteId/assign] DEBUG: Found ${allDeviceInspections.length} total inspection(s) for devices (including deleted)`);
+        if (allDeviceInspections.length > 0) {
+          console.log(`[PUT /site/:siteId/assign] DEBUG: Device inspections:`, allDeviceInspections.map(i => ({
+            id: i.id.toString(),
+            deviceId: i.deviceId?.toString(),
+            siteId: i.siteId?.toString(),
+            orgId: i.orgId.toString(),
+            deletedAt: i.deletedAt,
+          })));
+        }
+        
+        // Find inspections for these devices
+        inspections = await prisma.Inspection.findMany({
+          where: {
+            deviceId: {
+              in: deviceIds,
+            },
+            orgId: site.orgId, // Also match by organization
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            assignedTo: true,
+            type: true,
+            deviceId: true,
+            siteId: true,
+          },
+        });
+
+        console.log(`[PUT /site/:siteId/assign] Found ${inspections.length} active inspection(s) through devices in site ${siteId}`);
+        
+        // If still no inspections, try without orgId filter (in case orgId mismatch)
+        if (inspections.length === 0) {
+          console.log(`[PUT /site/:siteId/assign] No inspections with orgId filter, trying without orgId filter...`);
+          inspections = await prisma.Inspection.findMany({
+            where: {
+              deviceId: {
+                in: deviceIds,
+              },
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              assignedTo: true,
+              type: true,
+              deviceId: true,
+              siteId: true,
+              orgId: true,
+            },
+          });
+          console.log(`[PUT /site/:siteId/assign] Found ${inspections.length} inspection(s) without orgId filter`);
+        }
+        
+        // Update these inspections to have the correct siteId if they don't have it
+        if (inspections.length > 0) {
+          const inspectionsWithoutSiteId = inspections.filter(i => !i.siteId);
+          if (inspectionsWithoutSiteId.length > 0) {
+            console.log(`[PUT /site/:siteId/assign] Found ${inspectionsWithoutSiteId.length} inspection(s) without siteId, will update them`);
+          }
+        }
+      }
+      
+      // If still no inspections found, try finding by organization only (in case deviceId is null)
+      if (inspections.length === 0) {
+        console.log(`[PUT /site/:siteId/assign] No inspections through devices, trying by organization only...`);
+        const orgInspections = await prisma.Inspection.findMany({
+          where: {
+            orgId: site.orgId,
+            deletedAt: null,
+            // Try to find inspections that might be related to this site but don't have siteId set
+            OR: [
+              { siteId: null },
+              { siteId: BigInt(siteId) },
+            ],
+          },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            assignedTo: true,
+            type: true,
+            deviceId: true,
+            siteId: true,
+          },
+          take: 20, // Limit to avoid too many results
+        });
+        console.log(`[PUT /site/:siteId/assign] Found ${orgInspections.length} inspection(s) by organization (orgId: ${site.orgId.toString()})`);
+        if (orgInspections.length > 0) {
+          console.log(`[PUT /site/:siteId/assign] Sample org inspections:`, orgInspections.slice(0, 3).map(i => ({
+            id: i.id.toString(),
+            deviceId: i.deviceId?.toString(),
+            siteId: i.siteId?.toString(),
+          })));
+          // Use these inspections if we found any
+          inspections = orgInspections;
+        }
+      }
+    }
+
+    if (inspections.length > 0) {
+      console.log(`[PUT /site/:siteId/assign] Current inspection details:`, inspections.map(i => ({
+        id: i.id.toString(),
+        title: i.title,
+        status: i.status,
+        assignedTo: i.assignedTo?.toString(),
+        type: i.type,
+        deviceId: i.deviceId?.toString(),
+        siteId: i.siteId?.toString(),
+      })));
+    }
+
+    if (inspections.length === 0) {
+      console.log(`[PUT /site/:siteId/assign] No inspections found for site ${siteId}, creating new maintenance inspection...`);
+      
+      // Create a new inspection for repair/maintenance assignment
+      try {
+        const newInspection = await prisma.Inspection.create({
+          data: {
+            orgId: site.orgId,
+            siteId: BigInt(siteId),
+            deviceId: null, // Will be set later from Flutter app
+            contractId: null, // Will be set later if needed
+            templateId: null, // Will be set later from Flutter app
+            type: 'MAINTENANCE',
+            scheduleType: 'SCHEDULED', // Use SCHEDULED instead of DAILY to avoid showing in daily inspections list
+            title: `${site.name} - Засварын томилолт`,
+            scheduledAt: new Date(),
+            status: 'DRAFT',
+            progress: 0,
+            assignedTo: BigInt(userId),
+            createdBy: BigInt(req.user.id),
+            updatedBy: BigInt(req.user.id),
+            notes: 'Засварын томилолт (admin-web-аас автоматаар үүсгэсэн)',
+          },
+        });
+
+        console.log(`[PUT /site/:siteId/assign] Created new inspection ${newInspection.id.toString()} for site ${siteId}`);
+
+      return res.json({
+          message: `Successfully created and assigned 1 new inspection for repairs`,
+        data: {
+          siteId,
+            userId,
+            inspectionsAssigned: 1,
+            inspections: [{
+              id: newInspection.id.toString(),
+              title: newInspection.title,
+              status: newInspection.status,
+              type: newInspection.type,
+              isNewlyCreated: true,
+            }],
+        },
+      });
+      } catch (createError) {
+        console.error(`[PUT /site/:siteId/assign] Error creating new inspection:`, createError);
+        return res.status(500).json({
+          error: 'Failed to create inspection',
+          message: process.env.NODE_ENV === 'development' ? createError.message : 'Could not create inspection for repair assignment',
+        });
+      }
+    }
+
+    // Update all inspections to assign them to the user and set type to MAINTENANCE for repair assignment
+    // Use explicit updatedAt to ensure the timestamp is updated
+    const updateData = {
+      assignedTo: BigInt(userId),
+      type: 'MAINTENANCE',
+      updatedBy: BigInt(req.user.id),
+      updatedAt: new Date(),
+      // Also update siteId if it was null (for inspections found through devices)
+      siteId: BigInt(siteId),
+    };
+
+    console.log(`[PUT /site/:siteId/assign] Updating ${inspections.length} inspection(s) with data:`, {
+      assignedTo: userId,
+      type: 'MAINTENANCE',
+      updatedBy: req.user.id,
+      siteId: siteId,
+    });
+
+    // Get inspection IDs to update
+    const inspectionIds = inspections.map(i => i.id);
+
+    // Update inspections by their IDs (this works for both direct siteId and device-based inspections)
+    const updatedInspections = await prisma.Inspection.updateMany({
+      where: {
+        id: {
+          in: inspectionIds,
+        },
+        deletedAt: null,
+      },
+      data: updateData,
+    });
+
+    console.log(`[PUT /site/:siteId/assign] Update result: ${updatedInspections.count} inspection(s) updated (out of ${inspectionIds.length} found)`);
+
+    // Verify the update actually happened by querying the database
+    const verifyInspections = await prisma.Inspection.findMany({
+      where: {
+        siteId: BigInt(siteId),
+        deletedAt: null,
+        assignedTo: BigInt(userId),
+      },
+      select: {
+        id: true,
+        assignedTo: true,
+        type: true,
+        updatedAt: true,
+      },
+      take: 5, // Check first 5 to verify
+    });
+
+    console.log(`[PUT /site/:siteId/assign] Verification: Found ${verifyInspections.length} inspection(s) with assignedTo=${userId}`);
+    if (verifyInspections.length > 0) {
+      console.log(`[PUT /site/:siteId/assign] Sample updated inspection:`, {
+        id: verifyInspections[0].id.toString(),
+        assignedTo: verifyInspections[0].assignedTo?.toString(),
+        type: verifyInspections[0].type,
+        updatedAt: verifyInspections[0].updatedAt,
+      });
+    }
+
+    if (updatedInspections.count === 0) {
+      console.warn(`[PUT /site/:siteId/assign] WARNING: updateMany returned count=0, but ${inspections.length} inspections were found`);
+      return res.status(500).json({
+        error: 'Update failed',
+        message: 'No inspections were updated. This may indicate a database constraint issue.',
+      data: {
+          siteId,
+          inspectionsFound: inspections.length,
+          inspectionsUpdated: 0,
+      },
+    });
+    }
+
+    // Verify that the update actually persisted
+    if (verifyInspections.length === 0 && updatedInspections.count > 0) {
+      console.error(`[PUT /site/:siteId/assign] ERROR: updateMany reported ${updatedInspections.count} updates, but verification query found 0`);
+      return res.status(500).json({
+        error: 'Update verification failed',
+        message: 'The update was reported as successful, but the data was not persisted in the database.',
+        data: {
+          siteId,
+          inspectionsFound: inspections.length,
+          inspectionsUpdated: updatedInspections.count,
+          verifiedCount: 0,
+        },
+      });
+    }
+
+    // If verification found fewer than expected, log a warning but don't fail
+    if (verifyInspections.length < Math.min(updatedInspections.count, 5)) {
+      console.warn(`[PUT /site/:siteId/assign] WARNING: Expected at least ${Math.min(updatedInspections.count, 5)} updated inspections, but verification found ${verifyInspections.length}`);
+    }
+
+    res.json({
+      message: `Successfully assigned ${updatedInspections.count} inspection(s) to user`,
+      data: {
+        siteId,
+        userId,
+        inspectionsAssigned: updatedInspections.count,
+        inspections: inspections.map(i => ({
+          id: i.id.toString(),
+          title: i.title,
+          status: i.status,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error assigning site inspections:', error);
+    res.status(500).json({
+      error: 'Failed to assign site inspections',
+      message:
+        process.env.NODE_ENV === 'development'
+          ? error.message
+          : 'Internal server error',
+    });
+  }
+});
+
+/**
+ * PUT /api/inspections/contract/:contractId/assign
+ * Assign all inspections in a contract to a user
+ * This is used for repair assignment - assigning contract inspections makes repairs visible to user
+ * IMPORTANT: This route must be registered BEFORE /:id/assign route to avoid route conflicts
+ */
+router.put('/contract/:contractId/assign', authMiddleware, async (req, res) => {
+  try {
+    const { contractId } = req.params;
+    const { userId } = req.body;
+
+    console.log(`[PUT /contract/:contractId/assign] Assigning contract ${contractId} inspections to user ${userId}`);
+
+    // Validate userId
+    if (!userId) {
+      return res.status(400).json({
+        error: 'Missing required field',
+        message: 'userId is required',
+      });
+    }
+
+    // Check if contract exists
+    const contract = await prisma.Contract.findUnique({
+      where: { id: BigInt(contractId) },
+      include: {
+        _count: {
+          select: {
+            inspections: true,
           },
         },
+      },
+    });
+
+    if (!contract) {
+      console.error(`[PUT /contract/:contractId/assign] Contract ${contractId} not found`);
+      return res.status(404).json({
+        error: 'Contract not found',
+        message: 'Contract not found',
+      });
+    }
+
+    console.log(`[PUT /contract/:contractId/assign] Contract found: ${contract.contractName} (ID: ${contract.id.toString()}), orgId: ${contract.orgId.toString()}, total inspections: ${contract._count.inspections}`);
+
+    // Check if target user exists and is active
+    const targetUser = await prisma.User.findFirst({
+      where: {
+        id: BigInt(userId),
+        deletedAt: null,
+        isActive: true,
+      },
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'User not found or inactive',
+      });
+    }
+
+    // Find all inspections for this contract
+    // First try direct contractId match
+    let inspections = await prisma.Inspection.findMany({
+      where: {
+        contractId: BigInt(contractId),
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        type: true,
+        deviceId: true,
+        siteId: true,
+        orgId: true,
+      },
+    });
+
+    console.log(`[PUT /contract/:contractId/assign] Found ${inspections.length} active (non-deleted) inspection(s) with direct contractId=${contractId}`);
+
+    // If no inspections found with direct contractId, try finding inspections through devices in this contract
+    if (inspections.length === 0) {
+      console.log(`[PUT /contract/:contractId/assign] No inspections with direct contractId, checking through devices...`);
+      
+      // Find devices in this contract
+      const devicesInContract = await prisma.Device.findMany({
+        where: {
+          contractId: BigInt(contractId),
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      console.log(`[PUT /contract/:contractId/assign] Found ${devicesInContract.length} device(s) in contract ${contractId}`);
+
+      if (devicesInContract.length > 0) {
+        const deviceIds = devicesInContract.map(d => d.id);
+        console.log(`[PUT /contract/:contractId/assign] Device IDs in contract:`, deviceIds.map(id => id.toString()));
+        
+        // Find inspections for these devices
+        inspections = await prisma.Inspection.findMany({
+          where: {
+            deviceId: {
+              in: deviceIds,
+            },
+            orgId: contract.orgId, // Also match by organization
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            type: true,
+            deviceId: true,
+            siteId: true,
+            orgId: true,
+          },
+        });
+
+        console.log(`[PUT /contract/:contractId/assign] Found ${inspections.length} active inspection(s) through devices in contract ${contractId}`);
+        
+        // If still no inspections, try without orgId filter (in case orgId mismatch)
+        if (inspections.length === 0) {
+          console.log(`[PUT /contract/:contractId/assign] No inspections with orgId filter, trying without orgId filter...`);
+          inspections = await prisma.Inspection.findMany({
+            where: {
+              deviceId: {
+                in: deviceIds,
+              },
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              type: true,
+              deviceId: true,
+              siteId: true,
+              orgId: true,
+            },
+          });
+          console.log(`[PUT /contract/:contractId/assign] Found ${inspections.length} inspection(s) without orgId filter`);
+        }
+        
+        // Update these inspections to have the correct contractId if they don't have it
+        if (inspections.length > 0) {
+          const inspectionsWithoutContractId = inspections.filter(i => !i.contractId);
+          if (inspectionsWithoutContractId.length > 0) {
+            console.log(`[PUT /contract/:contractId/assign] Found ${inspectionsWithoutContractId.length} inspection(s) without contractId, will update them`);
+          }
+        }
+      }
+      
+      // If still no inspections found, try finding by organization only (in case deviceId is null)
+      if (inspections.length === 0) {
+        console.log(`[PUT /contract/:contractId/assign] No inspections through devices, trying by organization only...`);
+        const orgInspections = await prisma.Inspection.findMany({
+          where: {
+            orgId: contract.orgId,
+            deletedAt: null,
+            // Try to find inspections that might be related to this contract but don't have contractId set
+            OR: [
+              { contractId: null },
+              { contractId: BigInt(contractId) },
+            ],
+          },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            type: true,
+            deviceId: true,
+            siteId: true,
+            orgId: true,
+          },
+          take: 20, // Limit to avoid too many results
+        });
+        console.log(`[PUT /contract/:contractId/assign] Found ${orgInspections.length} inspection(s) by organization (orgId: ${contract.orgId.toString()})`);
+        if (orgInspections.length > 0) {
+          console.log(`[PUT /contract/:contractId/assign] Sample org inspections:`, orgInspections.slice(0, 3).map(i => ({
+            id: i.id.toString(),
+            deviceId: i.deviceId?.toString(),
+            contractId: i.contractId?.toString(),
+          })));
+          // Use these inspections if we found any
+          inspections = orgInspections;
+        }
+      }
+    }
+
+    if (inspections.length === 0) {
+      console.log(`[PUT /contract/:contractId/assign] No inspections found for contract ${contractId}, creating new maintenance inspection...`);
+      
+      // Create a new inspection for repair/maintenance assignment
+      try {
+        const newInspection = await prisma.Inspection.create({
+          data: {
+            orgId: contract.orgId,
+            contractId: BigInt(contractId),
+            deviceId: null, // Will be set later from Flutter app
+            siteId: null, // Will be set later if needed
+            templateId: null, // Will be set later from Flutter app
+            type: 'MAINTENANCE',
+            scheduleType: 'SCHEDULED', // Use SCHEDULED instead of DAILY to avoid showing in daily inspections list
+            title: `${contract.contractName} - Засварын томилолт`,
+            scheduledAt: new Date(),
+            status: 'DRAFT',
+            progress: 0,
+            assignedTo: BigInt(userId),
+            createdBy: BigInt(req.user.id),
+            updatedBy: BigInt(req.user.id),
+            notes: 'Засварын томилолт (admin-web-аас автоматаар үүсгэсэн)',
+          },
+        });
+
+        console.log(`[PUT /contract/:contractId/assign] Created new inspection ${newInspection.id.toString()} for contract ${contractId}`);
+
+        return res.json({
+          message: `Successfully created and assigned 1 new inspection for repairs`,
+          data: {
+            contractId,
+            userId,
+            inspectionsAssigned: 1,
+            inspections: [{
+              id: newInspection.id.toString(),
+              title: newInspection.title,
+              status: newInspection.status,
+              type: newInspection.type,
+              isNewlyCreated: true,
+            }],
+          },
+        });
+      } catch (createError) {
+        console.error(`[PUT /contract/:contractId/assign] Error creating new inspection:`, createError);
+        return res.status(500).json({
+          error: 'Failed to create inspection',
+          message: process.env.NODE_ENV === 'development' ? createError.message : 'Could not create inspection for repair assignment',
+        });
+      }
+    }
+
+    // Update all inspections to assign them to the user and set type to MAINTENANCE for repair assignment
+    // Also update contractId if it was null (for inspections found through devices)
+    const updateData = {
+      assignedTo: BigInt(userId),
+      type: 'MAINTENANCE',
+      updatedBy: BigInt(req.user.id),
+      updatedAt: new Date(),
+      contractId: BigInt(contractId), // Ensure contractId is set
+    };
+
+    console.log(`[PUT /contract/:contractId/assign] Updating ${inspections.length} inspection(s) with data:`, {
+      assignedTo: userId,
+      type: 'MAINTENANCE',
+      updatedBy: req.user.id,
+    });
+
+    // Get inspection IDs to update
+    const inspectionIds = inspections.map(i => i.id);
+
+    // Update inspections by their IDs
+    const updatedInspections = await prisma.Inspection.updateMany({
+      where: {
+        id: {
+          in: inspectionIds,
+        },
+        deletedAt: null,
+      },
+      data: updateData,
+    });
+
+    console.log(`[PUT /contract/:contractId/assign] Update result: ${updatedInspections.count} inspection(s) updated (out of ${inspectionIds.length} found)`);
+
+    // Verify the update actually happened by querying the database
+    const verifyInspections = await prisma.Inspection.findMany({
+      where: {
+        contractId: BigInt(contractId),
+        deletedAt: null,
+        assignedTo: BigInt(userId),
+      },
+      select: {
+        id: true,
+        assignedTo: true,
+        type: true,
+        updatedAt: true,
+      },
+      take: 5, // Check first 5 to verify
+    });
+
+    console.log(`[PUT /contract/:contractId/assign] Verification: Found ${verifyInspections.length} inspection(s) with assignedTo=${userId}`);
+
+    if (updatedInspections.count === 0) {
+      console.warn(`[PUT /contract/:contractId/assign] WARNING: updateMany returned count=0, but ${inspections.length} inspections were found`);
+      return res.status(500).json({
+        error: 'Update failed',
+        message: 'No inspections were updated. This may indicate a database constraint issue.',
+      });
+    }
+
+    // Verify that the update actually persisted
+    if (verifyInspections.length === 0 && updatedInspections.count > 0) {
+      console.error(`[PUT /contract/:contractId/assign] ERROR: updateMany reported ${updatedInspections.count} updates, but verification query found 0`);
+      return res.status(500).json({
+        error: 'Update verification failed',
+        message: 'The update was reported as successful, but the data was not persisted in the database.',
+      });
+    }
+
+    res.json({
+      message: `Successfully assigned ${updatedInspections.count} inspection(s) for repairs`,
+      count: updatedInspections.count,
+      contract: {
+        id: contract.id.toString(),
+        name: contract.contractName,
+        number: contract.contractNumber,
+      },
+      assignedTo: {
+        id: targetUser.id.toString(),
+        name: targetUser.fullName,
+        email: targetUser.email,
+      },
+    });
+  } catch (error) {
+    console.error(`[PUT /contract/:contractId/assign] Error:`, error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: process.env.NODE_ENV === 'development'
+          ? error.message
+          : 'Internal server error',
+    });
+  }
+});
+
+/**
+ * PUT /api/inspections/:id/assign
+ * Assign an inspection to one or multiple users
+ * Supports both single userId (string) and multiple userIds (array)
+ */
+router.put('/:id/assign', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId, userIds } = req.body;
+
+    // Support both single userId and userIds array
+    const userIdsToAssign = userIds || (userId ? [userId] : []);
+    
+    console.log(`Assigning inspection ${id} to users:`, userIdsToAssign);
+
+    // Validate userIds
+    if (!userIdsToAssign || userIdsToAssign.length === 0) {
+      return res.status(400).json({
+        error: 'Missing required field',
+        message: 'userId or userIds array is required',
+      });
+    }
+
+    // Check if inspection exists
+    const inspection = await prisma.Inspection.findFirst({
+      where: {
+        id: BigInt(id),
+        deletedAt: null,
+      },
+      include: {
         device: {
           select: {
             id: true,
@@ -4647,74 +6547,188 @@ router.put('/:id/assign', authMiddleware, async (req, res) => {
       },
     });
 
-    console.log(`[PUT /:id/assign] Inspection ${id} assigned successfully to user ${userId}`);
-    console.log(`[PUT /:id/assign] Updated inspection status: ${updatedInspection.status}`);
-    console.log(`[PUT /:id/assign] Updated inspection assignedTo: ${updatedInspection.assignedTo?.toString()}`);
-
-    if (updatedInspection.assignee?.email) {
-      const orgName = updatedInspection.organization?.name || 'Тодорхойгүй байгууллага';
-      const siteName = updatedInspection.site?.name || 'Талбайн мэдээлэл байхгүй';
-      const scheduledDate = formatDateTime(updatedInspection.scheduledAt);
-      const deviceParts = [];
-
-      if (updatedInspection.device?.serialNumber) {
-        deviceParts.push(`Сериал: ${updatedInspection.device.serialNumber}`);
-      }
-
-      if (updatedInspection.device?.assetTag) {
-        deviceParts.push(`Asset: ${updatedInspection.device.assetTag}`);
-      }
-
-      const deviceInfo =
-        deviceParts.length > 0
-          ? deviceParts.join(' / ')
-          : 'Төхөөрөмжийн дэлгэрэнгүй мэдээлэл одоогоор байхгүй байна.';
-
-      const instructions = updatedInspection.notes?.trim()
-        ? updatedInspection.notes.trim()
-        : 'Нэмэлт заавар ирээгүй байна. Дэлгэрэнгүйг систем дээрх тэмдэглэлээс шалгана уу.';
-
-      const subject = `Шинэ үзлэгийн томилолт - ${updatedInspection.title}`;
-      const text = [
-        `Сайн байна уу ${updatedInspection.assignee.fullName || ''},`,
-        '',
-        'Танд дараах үзлэгийн томилолт ирлээ:',
-        `• Үзлэг: ${updatedInspection.title}`,
-        `• Төрөл: ${updatedInspection.type}`,
-        `• Төлөвлөсөн огноо: ${scheduledDate}`,
-        `• Байгууллага: ${orgName}`,
-        `• Талбай: ${siteName}`,
-        `• Төхөөрөмж: ${deviceInfo}`,
-        '',
-        'Үзлэгийн заавар / тэмдэглэл:',
-        instructions,
-        '',
-        'Амжилттай гүйцэтгэнэ үү.',
-        '',
-        'Хүндэтгэсэн,',
-        'Inspection System',
-      ].join('\n');
-
-      try {
-        await sendInspectionAssignmentEmail({
-          to: updatedInspection.assignee.email,
-          subject,
-          text,
-        });
-      } catch (emailError) {
-        console.error('Failed to send assignment email:', emailError);
-      }
-    } else {
-      console.warn(
-        `Assigned user ${userId} does not have an email address, skipping notification.`
-      );
+    if (!inspection) {
+      return res.status(404).json({
+        error: 'Inspection not found',
+        message: 'Inspection not found',
+      });
     }
 
+    // Validate all users exist and are active
+    const userIdsBigInt = userIdsToAssign.map(id => BigInt(id));
+    const targetUsers = await prisma.User.findMany({
+      where: {
+        id: { in: userIdsBigInt },
+        deletedAt: null,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+      },
+    });
+
+    if (targetUsers.length !== userIdsToAssign.length) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'One or more users not found or inactive',
+      });
+    }
+
+    // Get existing assignments to avoid duplicates
+    const existingAssignments = await prisma.InspectionAssignment.findMany({
+      where: {
+        inspectionId: BigInt(id),
+      },
+      select: {
+        userId: true,
+      },
+    });
+
+    const existingUserIds = new Set(existingAssignments.map(a => a.userId.toString()));
+    
+    // Only create assignments for users that don't already exist
+    const newUserIds = userIdsBigInt.filter(userId => !existingUserIds.has(userId.toString()));
+    
+    // Remove assignments for users that are not in the new list
+    const userIdsToRemove = existingAssignments
+      .filter(a => !userIdsBigInt.some(newId => newId.toString() === a.userId.toString()))
+      .map(a => a.userId);
+    
+    if (userIdsToRemove.length > 0) {
+      await prisma.InspectionAssignment.deleteMany({
+        where: {
+          inspectionId: BigInt(id),
+          userId: { in: userIdsToRemove },
+        },
+      });
+    }
+
+    // Create new assignments only for users that don't already exist
+    let assignmentsCount = 0;
+    if (newUserIds.length > 0) {
+      const result = await prisma.InspectionAssignment.createMany({
+        data: newUserIds.map(userIdBigInt => ({
+          inspectionId: BigInt(id),
+          userId: userIdBigInt,
+          assignedBy: BigInt(req.user.id),
+        })),
+        skipDuplicates: true, // Extra safety to avoid duplicates
+      });
+      assignmentsCount = result.count;
+    }
+    
+    // Total assignments count (existing + new)
+    const totalAssignments = existingAssignments.length - userIdsToRemove.length + assignmentsCount;
+
+    // Also update the legacy assignedTo field with the first user (for backward compatibility)
+    const firstUserId = userIdsBigInt[0];
+    await prisma.Inspection.update({
+      where: { id: BigInt(id) },
+      data: {
+        assignedTo: firstUserId,
+        updatedBy: BigInt(req.user.id),
+      },
+    });
+
+    console.log(`[PUT /:id/assign] Inspection ${id} assigned successfully. Total: ${totalAssignments} user(s), New: ${assignmentsCount}, Removed: ${userIdsToRemove.length}`);
+
+    // Send email notifications to all assigned users
+    const orgName = inspection.organization?.name || 'Тодорхойгүй байгууллага';
+    const siteName = inspection.site?.name || 'Талбайн мэдээлэл байхгүй';
+    const scheduledDate = formatDateTime(inspection.scheduledAt);
+    const deviceParts = [];
+
+    if (inspection.device?.serialNumber) {
+      deviceParts.push(`Сериал: ${inspection.device.serialNumber}`);
+    }
+
+    if (inspection.device?.assetTag) {
+      deviceParts.push(`Asset: ${inspection.device.assetTag}`);
+    }
+
+    const deviceInfo =
+      deviceParts.length > 0
+        ? deviceParts.join(' / ')
+        : 'Төхөөрөмжийн дэлгэрэнгүй мэдээлэл одоогоор байхгүй байна.';
+
+    const instructions = inspection.notes?.trim()
+      ? inspection.notes.trim()
+      : 'Нэмэлт заавар ирээгүй байна. Дэлгэрэнгүйг систем дээрх тэмдэглэлээс шалгана уу.';
+
+    // Send emails to all assigned users
+    for (const user of targetUsers) {
+      if (user.email) {
+        const subject = `Шинэ үзлэгийн томилолт - ${inspection.title}`;
+        const text = [
+          `Сайн байна уу ${user.fullName || ''},`,
+          '',
+          'Танд дараах үзлэгийн томилолт ирлээ:',
+          `• Үзлэг: ${inspection.title}`,
+          `• Төрөл: ${inspection.type}`,
+          `• Төлөвлөсөн огноо: ${scheduledDate}`,
+          `• Байгууллага: ${orgName}`,
+          `• Талбай: ${siteName}`,
+          `• Төхөөрөмж: ${deviceInfo}`,
+          '',
+          'Үзлэгийн заавар / тэмдэглэл:',
+          instructions,
+          '',
+          'Амжилттай гүйцэтгэнэ үү.',
+          '',
+          'Хүндэтгэсэн,',
+          'Inspection System',
+        ].join('\n');
+
+        try {
+          await sendInspectionAssignmentEmail({
+            to: user.email,
+            subject,
+            text,
+          });
+        } catch (emailError) {
+          console.error(`Failed to send assignment email to ${user.email}:`, emailError);
+        }
+      }
+    }
+
+    // Get updated inspection with assignments
+    const updatedInspection = await prisma.Inspection.findUnique({
+      where: { id: BigInt(id) },
+      include: {
+        assignments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+        assignee: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
     res.json({
-      message: 'Inspection assigned successfully',
+      message: `Inspection assigned successfully to ${totalAssignments} user(s)`,
       data: {
         id: updatedInspection.id.toString(),
         title: updatedInspection.title,
+        assignees: updatedInspection.assignments.map(a => ({
+          id: a.user.id.toString(),
+          fullName: a.user.fullName,
+          email: a.user.email,
+        })),
+        // Keep backward compatibility
         assignee: updatedInspection.assignee
           ? {
               id: updatedInspection.assignee.id.toString(),
