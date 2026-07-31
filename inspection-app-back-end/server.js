@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -181,7 +181,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📱 API available at http://localhost:${PORT}`);
-  console.log(`📱 API available at http://192.168.1.35:${PORT}`);
+  console.log(`📱 API available at http://192.168.1.54:${PORT}`);
   console.log(`🏥 Health check at http://localhost:${PORT}/health`);
   console.log(`🌐 Network access: http://${require('os').networkInterfaces()['Ethernet']?.[0]?.address || '0.0.0.0'}:${PORT}`);
 });

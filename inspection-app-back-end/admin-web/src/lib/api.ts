@@ -5,7 +5,7 @@ const BACKEND_PORT = process.env.NEXT_PUBLIC_BACKEND_PORT || '4555';
 
 // API Configuration
 // In the browser: always use current hostname + backend port so that
-// - http://192.168.1.35:3002 -> API http://192.168.1.35:4555
+// - http://192.168.1.54:3002 -> API http://192.168.1.54:4555
 // - http://localhost:3000 -> API http://localhost:4555
 // This fixes PDF download, inspection delete, and mail when opening via Docker IP.
 function getApiBaseUrl(): string {
@@ -16,7 +16,7 @@ function getApiBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
-  return `http://192.168.1.35:${BACKEND_PORT}`;
+  return `http://192.168.1.54:${BACKEND_PORT}`;
 }
 
 export const API_CONFIG = {
@@ -791,7 +791,7 @@ export const apiService = {
           const text = await error.response.data.text();
           try {
             const errorData = JSON.parse(text);
-            const parsedError = new Error(errorData.message || errorData.error || 'Суурьлуулалтын тайлан татахад алдаа гарлаа');
+            const parsedError = new Error(errorData.message || errorData.error || 'Суурилуулалтын тайлан татахад алдаа гарлаа');
             (parsedError as any).response = { ...error.response, data: errorData };
             throw parsedError;
           } catch (_) {

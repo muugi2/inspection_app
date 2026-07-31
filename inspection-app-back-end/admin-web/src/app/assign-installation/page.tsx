@@ -257,7 +257,7 @@ export default function AssignInstallationPage() {
       const createResponse = await apiService.installationAssignments.create(assignmentData);
       const assignmentsCount = createResponse?.count || createResponse?.data?.length || 0;
       
-      setSuccess(`Суурьлуулалтын томилолт ${selectedTemplateIds.length} template-д ${selectedUserIds.length} хүнд амжилттай үүслээ! (Нийт ${assignmentsCount} томилолт)`);
+      setSuccess(`Суурилуулалтын томилолт ${selectedTemplateIds.length} template-д ${selectedUserIds.length} хүнд амжилттай үүслээ! (Нийт ${assignmentsCount} томилолт)`);
       
       // Reset form
       setSelectedOrgId('');
@@ -321,7 +321,7 @@ export default function AssignInstallationPage() {
         {/* Header */}
         <header className="bg-white shadow-sm">
           <div className="px-6 py-4">
-            <h1 className="text-xl font-bold text-gray-900">Суурьлуулалтын томилолт үүсгэх</h1>
+            <h1 className="text-xl font-bold text-gray-900">Суурилуулалтын томилолт үүсгэх</h1>
             <p className="text-xs text-gray-500 mt-1">Байгууллага → Гэрээ → Template → Хэрэглэгч</p>
           </div>
         </header>
@@ -592,7 +592,7 @@ export default function AssignInstallationPage() {
                   <div className="max-h-64 overflow-y-auto border-2 border-gray-300 rounded-lg p-3 space-y-2">
                     {templates.length === 0 ? (
                       <p className="text-sm text-gray-500 text-center py-4">
-                        Суурьлуулалтын template олдсонгүй
+                        Суурилуулалтын template олдсонгүй
                       </p>
                     ) : (
                       templates.map((template) => (

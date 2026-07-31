@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 
 /// Centralized application configuration
 class AppConfig {
@@ -6,7 +6,7 @@ class AppConfig {
   // API CONFIGURATION
   // ==========================================
   // Production server configuration
-  static const String _productionServerIp = '192.168.1.35';
+  static const String _productionServerIp = '192.168.1.54';
   static const int _productionServerPort = 4555;
 
   // Ngrok configuration
@@ -63,7 +63,7 @@ class AppConfig {
   ];
 
   /// FTP configuration
-  static const String ftpHost = '192.168.1.35';
+  static const String ftpHost = '192.168.1.54';
   static const int ftpPort = 2121;
   static const String ftpUser = 'test';
   static const String ftpPassword = 'T3st!234';

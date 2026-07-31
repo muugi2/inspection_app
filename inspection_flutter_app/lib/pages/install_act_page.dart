@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:app/assets/app_colors.dart';
@@ -71,7 +71,7 @@ class _InstallActPageState extends State<InstallActPage> {
           var imageUrl = act['image_url']?.toString();
           if (imageUrl != null && imageUrl.isNotEmpty) {
             // Convert local IP URL to ngrok URL if ngrok is configured
-            if (imageUrl.contains('192.168.1.35:4555') && AppConfig.apiBaseUrl.contains('ngrok')) {
+            if (imageUrl.contains('192.168.1.54:4555') && AppConfig.apiBaseUrl.contains('ngrok')) {
               final pathMatch = RegExp(r'/uploads/(.+)$').firstMatch(imageUrl);
               if (pathMatch != null) {
                 final imagePath = pathMatch.group(1);

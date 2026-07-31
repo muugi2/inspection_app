@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { authMiddleware } = require('../middleware/auth');
 const { serializeBigInt, handleError } = require('../utils/routeHelpers');
@@ -748,7 +748,7 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
       
       // If buildPublicUrl returns null, construct URL manually
       if (!publicUrl) {
-        const FTP_PUBLIC_BASE_URL = process.env.FTP_PUBLIC_BASE_URL || 'http://192.168.1.35:4555/uploads';
+        const FTP_PUBLIC_BASE_URL = process.env.FTP_PUBLIC_BASE_URL || 'http://192.168.1.54:4555/uploads';
         publicUrl = `${FTP_PUBLIC_BASE_URL}/${newFileName}`;
       }
       

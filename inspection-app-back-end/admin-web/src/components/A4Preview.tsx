@@ -97,7 +97,7 @@ const templateFields: Record<string, string[]> = {
   exterior: ['platform_plate', 'beam_joint_plate', 'stop_bolt', 'interplatform_bolts', 'base'],
   indicator: ['led_display', 'power_plug', 'seal_bolt', 'buttons', 'junction_wiring', 'serial_converter', 'control_screen'],
   jbox: ['box_integrity', 'collector_board', 'wire_tightener', 'protective_box', 'resistance_element'], // resistance_element for digital
-  sensor: ['signal_wire', 'ball', 'ball_cup_thin', 'plate'],
+  sensor: ['signal_wire', 'ball', 'ball_cup_thin', 'plate', 'load_sensor'],
   foundation: ['cross_base', 'anchor_plate', 'ramp_angle', 'ramp_stopper', 'ramp', 'slab_base'],
   cleanliness: ['under_platform', 'top_platform', 'gap_platform_ramp', 'both_sides_area'],
 };
@@ -191,6 +191,7 @@ const fieldLabels: Record<string, Record<string, string>> = {
     ball: 'Ган бөмбөлөг',
     ball_cup_thin: 'Ган бөмбөлгийн аяган суурь /нимгэн/',
     plate: 'Ялтсан хавтан',
+    load_sensor: 'Ачаа мэдрэгч/Даачиг/',
   },
   foundation: {
     cross_base: 'Хөндлөн суурь',

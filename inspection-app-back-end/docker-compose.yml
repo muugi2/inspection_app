@@ -1,4 +1,4 @@
-services:
+﻿services:
   mysql:
     image: mysql:8.0
     container_name: inspection_mysql
@@ -37,10 +37,10 @@ services:
     restart: unless-stopped
     environment:
       - USERS=test|T3st!234|/ftp/test
-      - ADDRESS=${SERVER_IP:-192.168.1.35}
+      - ADDRESS=${SERVER_IP:-192.168.1.54}
       - MIN_PORT=21000
       - MAX_PORT=21010
-      - PASV_ADDRESS=${SERVER_IP:-192.168.1.35}
+      - PASV_ADDRESS=${SERVER_IP:-192.168.1.54}
       - LOG_STDOUT=1
     ports:
       - '0.0.0.0:2121:21'
@@ -76,11 +76,11 @@ services:
       - JWT_EXPIRES_IN=7d
       # File Storage
       - FTP_STORAGE_PATH=/app/uploads
-      - FTP_PUBLIC_BASE_URL=http://${SERVER_IP:-192.168.1.35}:${BACKEND_PORT:-4555}/uploads
-      - FTP_BASE_URL=ftp://${SERVER_IP:-192.168.1.35}
+      - FTP_PUBLIC_BASE_URL=http://${SERVER_IP:-192.168.1.54}:${BACKEND_PORT:-4555}/uploads
+      - FTP_BASE_URL=ftp://${SERVER_IP:-192.168.1.54}
       - FTP_REMOTE_PREFIX=test
       # Server IP
-      - SERVER_IP=${SERVER_IP:-192.168.1.35}
+      - SERVER_IP=${SERVER_IP:-192.168.1.54}
       # Email (optional)
       - NOTIFY_EMAIL_USER=${NOTIFY_EMAIL_USER:-}
       - NOTIFY_EMAIL_PASSWORD=${NOTIFY_EMAIL_PASSWORD:-}
@@ -135,7 +135,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - NEXT_PUBLIC_API_URL=http://${SERVER_IP:-192.168.1.35}:${BACKEND_PORT:-4555}
+      - NEXT_PUBLIC_API_URL=http://${SERVER_IP:-192.168.1.54}:${BACKEND_PORT:-4555}
     depends_on:
       - backend
     networks:

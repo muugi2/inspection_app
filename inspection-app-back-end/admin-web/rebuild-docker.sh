@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Script to rebuild admin-web Docker container without cache
 # This ensures all routes including monthly-report are included
 
@@ -28,5 +28,5 @@ docker-compose up -d admin-web
 echo ""
 echo "=== Build complete ==="
 echo "Check logs with: docker-compose logs -f admin-web"
-echo "Access at: http://192.168.1.35:3002/monthly-report"
+echo "Access at: http://192.168.1.54:3002/monthly-report"
 

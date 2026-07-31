@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { authMiddleware } = require('../middleware/auth');
 const {
@@ -2829,7 +2829,7 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
     console.log(`📦 Processing ${req.files.length} uploaded file(s)`);
     
     // Rename files to correct format: inspection_{id}_ans_{answerId}_field_{fieldId}_{timestamp}_{order}.jpg
-    const FTP_BASE_URL = process.env.FTP_BASE_URL || 'ftp://192.168.1.35';
+    const FTP_BASE_URL = process.env.FTP_BASE_URL || 'ftp://192.168.1.54';
     const FTP_REMOTE_PREFIX = process.env.FTP_REMOTE_PREFIX || 'test';
     const timestamp = Date.now();
     
@@ -2857,7 +2857,7 @@ router.post('/:id/upload-images', authMiddleware, upload.array('images', 10), as
         continue;
       }
       
-      // Build FTP URL in format: ftp://192.168.1.35/test/{filename}
+      // Build FTP URL in format: ftp://192.168.1.54/test/{filename}
       const imageUrl = `${FTP_BASE_URL}/${FTP_REMOTE_PREFIX}/${newFileName}`;
 
       console.log(`  📸 Image ${i + 1}:`);

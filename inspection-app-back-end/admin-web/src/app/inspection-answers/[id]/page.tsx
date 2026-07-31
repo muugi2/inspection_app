@@ -1,8 +1,8 @@
 'use client';
 
 import fileDownload from 'js-file-download';
-import { useState, useEffect, use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, use, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { authUtils, User } from '@/lib/auth';
 import { apiService } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
@@ -27,7 +27,7 @@ interface InspectionAnswer {
   };
 }
 
-export default function InspectionAnswerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+function InspectionAnswerDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const [user, setUser] = useState<User | null>(null);
   const [answer, setAnswer] = useState<InspectionAnswer | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -36,6 +36,8 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
   const [isDeleting, setIsDeleting] = useState(false);
 
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromPage = searchParams.get('fromPage') || '1';
   const resolvedParams = use(params);
 
   useEffect(() => {
@@ -112,7 +114,7 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
         <div className="text-center">
           <p className="text-gray-500">Үзлэгийн хариулт олдсонгүй</p>
           <button
-            onClick={() => router.push('/inspection-answers')}
+            onClick={() => router.push(`/inspection-answers?page=${fromPage}`)}
             className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium"
           >
             Буцах
@@ -132,7 +134,7 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <button
-                  onClick={() => router.push('/inspection-answers')}
+                  onClick={() => router.push(`/inspection-answers?page=${fromPage}`)}
                   className="text-indigo-600 hover:text-indigo-800 mb-2 text-sm font-medium"
                 >
                   ← Буцах
@@ -201,7 +203,7 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
                           setError('');
                           await apiService.inspectionAnswers.delete(String(answer.id));
                           alert('Үзлэгийн хариулт амжилттай устгагдлаа.');
-                          router.push('/inspection-answers');
+                          router.push(`/inspection-answers?page=${fromPage}`);
                         } catch (err: any) {
                           let errorMessage = 'Үзлэгийн хариулт устгах явцад алдаа гарлаа.';
                           if (err?.response?.data) {
@@ -268,6 +270,11 @@ export default function InspectionAnswerDetailPage({ params }: { params: Promise
   );
 }
 
-
-
+export default function InspectionAnswerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div></div>}>
+      <InspectionAnswerDetailContent params={params} />
+    </Suspense>
+  );
+}
 

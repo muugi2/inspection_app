@@ -106,6 +106,7 @@ const FIELD_MAPPINGS = {
     base:         'base',
     ball_cup_thin:'ball_cup_thin',
     plate:        'plate',
+    load_sensor:  'load_sensor',
   },
   foundation: {
     cross_base:   'cross_base',
