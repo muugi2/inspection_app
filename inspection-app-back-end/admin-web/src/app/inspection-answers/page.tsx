@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { authUtils, User } from '@/lib/auth';
 import { apiService } from '@/lib/api';
 import Sidebar from '@/components/Sidebar';
@@ -93,58 +93,36 @@ interface Repair {
 
 type TabType = 'inspection' | 'repair';
 
-export default function InspectionAnswersPage() {
+function InspectionAnswersContent() {
   const [user, setUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>('inspection');
   const [answers, setAnswers] = useState<InspectionAnswer[]>([]);
   const [repairs, setRepairs] = useState<Repair[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingRepairs, setIsLoadingRepairs] = useState(false);
   const [error, setError] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [repairCurrentPage, setRepairCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [repairTotalPages, setRepairTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [repairTotalCount, setRepairTotalCount] = useState(0);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  useEffect(() => {
-    const initializePage = async () => {
-      // Check if user is authenticated
-      if (!authUtils.isAuthenticated()) {
-        router.push('/login');
-        return;
-      }
+  const activeTab = (searchParams.get('tab') as TabType) || 'inspection';
+  const currentPage = parseInt(searchParams.get('page') || '1', 10);
+  const repairCurrentPage = parseInt(searchParams.get('repairPage') || '1', 10);
 
-      // Get user data
-      const currentUser = authUtils.getUser();
-      if (currentUser) {
-        setUser(currentUser);
-      }
+  const updateUrl = (params: Record<string, string>) => {
+    const current = new URLSearchParams(searchParams.toString());
+    Object.entries(params).forEach(([key, value]) => current.set(key, value));
+    router.push(`/inspection-answers?${current.toString()}`);
+  };
 
-      // Load data based on active tab
-      if (activeTab === 'inspection') {
-        await loadInspectionAnswers();
-      } else {
-        await loadRepairs();
-      }
-    };
-
-    initializePage();
-  }, [router, activeTab]);
-
-  const loadInspectionAnswers = async (page = 1) => {
+  const loadInspectionAnswers = useCallback(async (page = 1) => {
     try {
       setIsLoading(true);
       setError('');
-      const response = await apiService.inspectionAnswers.getAll({
-        page,
-        limit: 20
-      });
-      
+      const response = await apiService.inspectionAnswers.getAll({ page, limit: 20 });
       setAnswers(response.data || []);
-      setCurrentPage(response.pagination?.page || 1);
       setTotalPages(response.pagination?.pages || 1);
       setTotalCount(response.pagination?.total || 0);
     } catch (err: any) {
@@ -153,19 +131,14 @@ export default function InspectionAnswersPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const loadRepairs = async (page = 1) => {
+  const loadRepairs = useCallback(async (page = 1) => {
     try {
       setIsLoadingRepairs(true);
       setError('');
-      const response = await apiService.repairs.getAll({
-        page,
-        limit: 20
-      });
-      
+      const response = await apiService.repairs.getAll({ page, limit: 20 });
       setRepairs(response.data || []);
-      setRepairCurrentPage(response.pagination?.page || 1);
       setRepairTotalPages(response.pagination?.pages || 1);
       setRepairTotalCount(response.pagination?.total || 0);
     } catch (err: any) {
@@ -174,30 +147,36 @@ export default function InspectionAnswersPage() {
     } finally {
       setIsLoadingRepairs(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!authUtils.isAuthenticated()) {
+      router.push('/login');
+      return;
+    }
+    const currentUser = authUtils.getUser();
+    if (currentUser) setUser(currentUser);
+  }, [router]);
+
+  useEffect(() => {
+    if (activeTab === 'inspection') {
+      loadInspectionAnswers(currentPage);
+    } else {
+      loadRepairs(repairCurrentPage);
+    }
+  }, [activeTab, currentPage, repairCurrentPage, loadInspectionAnswers, loadRepairs]);
 
   const handlePageChange = (page: number) => {
-    setCurrentPage(page);
-    loadInspectionAnswers(page);
+    updateUrl({ page: String(page) });
   };
 
   const handleRepairPageChange = (page: number) => {
-    setRepairCurrentPage(page);
-    loadRepairs(page);
+    updateUrl({ repairPage: String(page) });
   };
 
   const handleTabChange = (tab: TabType) => {
-    setActiveTab(tab);
     setError('');
-    if (tab === 'inspection') {
-      if (answers.length === 0) {
-        loadInspectionAnswers();
-      }
-    } else {
-      if (repairs.length === 0) {
-        loadRepairs();
-      }
-    }
+    updateUrl({ tab, page: '1', repairPage: '1' });
   };
 
   const getStatusColor = (status: string) => {
@@ -454,7 +433,7 @@ export default function InspectionAnswersPage() {
                         </div>
                         <div className="flex items-center space-x-2">
                           <button
-                            onClick={() => router.push(`/inspection-answers/${answer.id}`)}
+                            onClick={() => router.push(`/inspection-answers/${answer.id}?fromPage=${currentPage}`)}
                             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-medium"
                           >
                             Дэлгэрэнгүй
@@ -738,6 +717,14 @@ export default function InspectionAnswersPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function InspectionAnswersPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-32 w-32 border-b-2 border-indigo-600"></div></div>}>
+      <InspectionAnswersContent />
+    </Suspense>
   );
 }
 

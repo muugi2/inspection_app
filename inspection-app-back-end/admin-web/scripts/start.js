@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,15 +40,15 @@ const env = {
   NODE_ENV: 'production',
   PORT: port,
   HOSTNAME: hostname,
-  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://192.168.1.35:4555',
+  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://192.168.1.54:4555',
 };
 
 console.log('🚀 Starting production server...\n');
 console.log(`🌐 Server will be available at:`);
 if (useNetwork) {
   console.log(`   - Local:   http://localhost:${port}`);
-  console.log(`   - Network: http://192.168.1.35:${port}`);
-  console.log(`   ⚠️  Note: Use http://localhost:${port} or http://192.168.1.35:${port} in your browser`);
+  console.log(`   - Network: http://192.168.1.54:${port}`);
+  console.log(`   ⚠️  Note: Use http://localhost:${port} or http://192.168.1.54:${port} in your browser`);
   console.log(`   ❌ Do NOT use http://0.0.0.0:${port} (browsers don't support 0.0.0.0)`);
 } else {
   console.log(`   - Local:   http://localhost:${port}`);

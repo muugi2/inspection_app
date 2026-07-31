@@ -149,8 +149,8 @@ export default function InstallationReportPage() {
       <div className="flex-1 ml-64">
         <header className="bg-white shadow-sm">
           <div className="px-6 py-4">
-            <h1 className="text-xl font-bold text-gray-900">Суурьлуулалтын тайлан</h1>
-            <p className="text-sm text-gray-500">Гэрээг сонгоод суурьлуулалтын тайланг DOCX хэлбэрээр татах</p>
+            <h1 className="text-xl font-bold text-gray-900">Суурилуулалтын тайлан</h1>
+            <p className="text-sm text-gray-500">Гэрээг сонгоод суурилуулалтын тайланг DOCX хэлбэрээр татах</p>
           </div>
         </header>
 
@@ -221,7 +221,7 @@ export default function InstallationReportPage() {
                       Татаж байна...
                     </span>
                   ) : (
-                    '📥 Суурьлуулалтын тайлан татах (.docx)'
+                    '📥 Суурилуулалтын тайлан татах (.docx)'
                   )}
                 </button>
               </div>

@@ -6,21 +6,24 @@ export default function TopNavbar() {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Report menu items (horizontal navbar)
-  const reportMenuItems = [
+  // Registration section tabs (horizontal navbar)
+  const menuItems = [
     {
       name: 'Байгууллага',
       path: '/organizations',
+      relatedPrefix: '/organization-details',
       icon: '🏢',
     },
     {
       name: 'Талбай',
       path: '/sites',
+      relatedPrefix: '/site-details',
       icon: '📍',
     },
     {
       name: 'Гэрээ',
       path: '/contracts',
+      relatedPrefix: '/contract-details',
       icon: '📄',
     },
     {
@@ -34,17 +37,17 @@ export default function TopNavbar() {
       icon: '🔧',
     },
     {
-      name: 'Үзлэг',
+      name: 'Үзлэгийн загвар',
       path: '/inspections',
       icon: '📋',
     },
   ];
 
-  const isActive = (path: string) => pathname === path;
-  const isReportPage = reportMenuItems.some(item => isActive(item.path));
+  const isActive = (item: { path: string; relatedPrefix?: string }) =>
+    pathname === item.path || (item.relatedPrefix ? pathname.startsWith(item.relatedPrefix) : false);
 
-  // Only show navbar if on a report page
-  if (!isReportPage) {
+  // Only show navbar within the registration section
+  if (!menuItems.some(isActive)) {
     return null;
   }
 
@@ -52,12 +55,12 @@ export default function TopNavbar() {
     <nav className="bg-white border-b border-gray-200 shadow-sm">
       <div className="px-6 py-3">
         <div className="grid grid-cols-6 gap-2">
-          {reportMenuItems.map((item) => (
+          {menuItems.map((item) => (
             <button
               key={item.path}
               onClick={() => router.push(item.path)}
-              className={`flex flex-col items-center justify-center gap-1 px-2 py-3 rounded-lg text-xs font-medium transition-colors ${
-                isActive(item.path)
+              className={`flex flex-col items-center justify-center gap-1 px-2 py-3 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                isActive(item)
                   ? 'bg-indigo-600 text-white'
                   : 'text-gray-700 hover:bg-gray-100'
               }`}
@@ -71,4 +74,3 @@ export default function TopNavbar() {
     </nav>
   );
 }
-

@@ -1,4 +1,4 @@
-# Deploy updates to 192.168.1.35:3002
+﻿# Deploy updates to 192.168.1.54:3002
 # Backend: restart only (code from volume). Admin-web: rebuild required.
 
 $ErrorActionPreference = "Stop"
@@ -7,7 +7,7 @@ $projectRoot = $PSScriptRoot
 Set-Location $projectRoot
 
 Write-Host ""
-Write-Host "=== Deploy updates to 192.168.1.35:3002 ===" -ForegroundColor Green
+Write-Host "=== Deploy updates to 192.168.1.54:3002 ===" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "[1/3] Restarting backend..." -ForegroundColor Yellow
@@ -36,9 +36,9 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "=== Done ===" -ForegroundColor Green
-Write-Host "Admin web: http://192.168.1.35:3002" -ForegroundColor Cyan
-Write-Host "Backend API: http://192.168.1.35:4555" -ForegroundColor Cyan
+Write-Host "Admin web: http://192.168.1.54:3002" -ForegroundColor Cyan
+Write-Host "Backend API: http://192.168.1.54:4555" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "PDF download, Mail send, Inspection delete work at 192.168.1.35:3002" -ForegroundColor White
+Write-Host "PDF download, Mail send, Inspection delete work at 192.168.1.54:3002" -ForegroundColor White
 Write-Host "Auto mail on inspection complete is disabled; only Admin Mail button sends email." -ForegroundColor White
 Write-Host ""

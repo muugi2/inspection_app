@@ -1,11 +1,11 @@
-const fs = require('fs/promises');
+﻿const fs = require('fs/promises');
 const path = require('path');
 
 const DEFAULT_STORAGE_PATH =
   process.env.FTP_STORAGE_PATH || path.resolve('C:/ftp_data');
 const DEFAULT_PUBLIC_BASE_URL =
   process.env.FTP_PUBLIC_BASE_URL ||
-  'http://192.168.1.35:4555/uploads';
+  'http://192.168.1.54:4555/uploads';
 const FTP_REMOTE_PREFIX = (process.env.FTP_REMOTE_PREFIX || 'test')
   .trim()
   .replace(/^\/+|\/+$/g, '');

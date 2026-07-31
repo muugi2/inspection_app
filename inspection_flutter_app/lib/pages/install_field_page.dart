@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:app/assets/app_colors.dart';
@@ -116,7 +116,7 @@ class _InstallFieldPageState extends State<InstallFieldPage> {
                 // Convert local IP URL to ngrok URL if ngrok is configured
                 if (url != null && url.isNotEmpty) {
                   // If URL contains local IP and ngrok is configured, replace with ngrok URL
-                  if (url.contains('192.168.1.35:4555') && AppConfig.apiBaseUrl.contains('ngrok')) {
+                  if (url.contains('192.168.1.54:4555') && AppConfig.apiBaseUrl.contains('ngrok')) {
                     // Extract the path after /uploads/
                     final pathMatch = RegExp(r'/uploads/(.+)$').firstMatch(url);
                     if (pathMatch != null) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { authUtils } from '@/lib/auth';
 import type { ComponentType } from 'react';
@@ -9,16 +9,17 @@ type IconProps = {
   className?: string;
 };
 
+const iconBase = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.5,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+};
+
 const DashboardIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
     <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
     <rect x="13.5" y="3.5" width="7" height="5" rx="1.5" />
     <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
@@ -27,30 +28,14 @@ const DashboardIcon = ({ className = '' }: IconProps) => (
 );
 
 const AssignIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
     <path d="M5 12l4 4 10-10" />
     <path d="M5 5v4h4" />
   </svg>
 );
 
 const UsersIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
     <circle cx="9" cy="7" r="3" />
     <path d="M3 21v-2a4 4 0 014-4h4" />
     <circle cx="17" cy="9" r="2.5" />
@@ -59,72 +44,64 @@ const UsersIcon = ({ className = '' }: IconProps) => (
 );
 
 const AnswersIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
     <rect x="4" y="3.5" width="16" height="17" rx="2" />
     <path d="M8 8h8M8 12h8M8 16h5" />
   </svg>
 );
 
 const ReportsIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
     <path d="M5 19v-6M12 19V5M19 19v-9" />
   </svg>
 );
 
 const RegisterIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
     <path d="M4 7h16M4 12h16M4 17h16" />
   </svg>
 );
 
-const ActivityIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
-    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+const BuildingIcon = ({ className = '' }: IconProps) => (
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
+    <rect x="4" y="3" width="12" height="18" rx="1" />
+    <path d="M16 9h4v12h-4" />
+    <path d="M8 7h2M8 11h2M8 15h2M12 7h1M12 11h1M12 15h1" />
+  </svg>
+);
+
+const MapPinIcon = ({ className = '' }: IconProps) => (
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
+    <path d="M12 21s-6.5-5.5-6.5-10.5a6.5 6.5 0 1113 0C18.5 15.5 12 21 12 21z" />
+    <circle cx="12" cy="10.5" r="2.5" />
+  </svg>
+);
+
+const ContractIcon = ({ className = '' }: IconProps) => (
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
+    <path d="M7 3h8l4 4v14H7z" />
+    <path d="M15 3v4h4" />
+    <path d="M10 12h6M10 16h6" />
+  </svg>
+);
+
+const DeviceIcon = ({ className = '' }: IconProps) => (
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
+    <rect x="5" y="4" width="14" height="16" rx="2" />
+    <circle cx="12" cy="11" r="3" />
+    <path d="M9 18h6" />
+  </svg>
+);
+
+const GearIcon = ({ className = '' }: IconProps) => (
+  <svg {...iconBase} className={`w-5 h-5 ${className}`}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3h.1a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5h.1a1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9v.1a1.7 1.7 0 001.5 1h.2a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" />
   </svg>
 );
 
 const ChevronDownIcon = ({ className = '' }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-4 h-4 transition-transform duration-200 ${className}`}
-  >
+  <svg {...iconBase} strokeWidth={2} className={`w-4 h-4 transition-transform duration-200 ${className}`}>
     <path d="M6 9l6 6 6-6" />
   </svg>
 );
@@ -133,14 +110,59 @@ type MenuItem = {
   name: string;
   path: string;
   icon: ComponentType<IconProps>;
+  // Detail pages that should keep this menu item highlighted
+  relatedPaths?: string[];
 };
 
-type MenuGroup = {
-  name: string;
-  icon: ComponentType<IconProps>;
-  items: MenuItem[];
-  defaultOpen?: boolean;
-};
+type MenuEntry =
+  | { kind: 'item'; item: MenuItem }
+  | { kind: 'group'; name: string; icon: ComponentType<IconProps>; items: MenuItem[] };
+
+const MENU: MenuEntry[] = [
+  {
+    kind: 'item',
+    item: { name: 'Dashboard', path: '/dashboard', icon: DashboardIcon },
+  },
+  {
+    kind: 'group',
+    name: 'Бүртгэл',
+    icon: RegisterIcon,
+    items: [
+      { name: 'Байгууллага', path: '/organizations', icon: BuildingIcon, relatedPaths: ['/organization-details'] },
+      { name: 'Талбай', path: '/sites', icon: MapPinIcon, relatedPaths: ['/site-details'] },
+      { name: 'Гэрээ', path: '/contracts', icon: ContractIcon, relatedPaths: ['/contract-details'] },
+      { name: 'Төхөөрөмжийн загвар', path: '/device-models', icon: GearIcon },
+      { name: 'Төхөөрөмж', path: '/devices', icon: DeviceIcon },
+      { name: 'Үзлэгийн загвар', path: '/inspections', icon: AnswersIcon },
+    ],
+  },
+  {
+    kind: 'group',
+    name: 'Ажил томилох',
+    icon: AssignIcon,
+    items: [
+      { name: 'Үзлэг томилох', path: '/assign-inspection', icon: AssignIcon },
+      { name: 'Засвар томилох', path: '/assign-repair', icon: AssignIcon },
+      { name: 'Суурилуулалт томилох', path: '/assign-installation', icon: AssignIcon },
+      { name: 'Баталгаажуулалт томилох', path: '/assign-verification', icon: AssignIcon },
+    ],
+  },
+  {
+    kind: 'group',
+    name: 'Тайлан',
+    icon: ReportsIcon,
+    items: [
+      { name: 'Үзлэгийн тайлан', path: '/inspection-answers', icon: AnswersIcon },
+      { name: 'Засварын тайлан', path: '/repair-answers', icon: AnswersIcon },
+      { name: 'Суурилуулалтын тайлан', path: '/installation-report', icon: ReportsIcon },
+      { name: 'Сарын тайлан', path: '/monthly-report', icon: ReportsIcon },
+    ],
+  },
+  {
+    kind: 'item',
+    item: { name: 'Хэрэглэгч удирдах', path: '/users', icon: UsersIcon },
+  },
+];
 
 interface SidebarProps {
   currentUser?: {
@@ -157,114 +179,33 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
   const pathname = usePathname();
   const [currentUser, setCurrentUser] = useState<SidebarProps['currentUser']>(null);
   const [mounted, setMounted] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    'Тайлан': true,
-    'Хэрэглэгч удирдах': true,
-    'Бүртгэл': false,
-    'Үйл ажиллагаа': false,
-  });
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
-  const menuGroups: MenuGroup[] = useMemo(() => [
-    {
-      name: 'Тайлан',
-      icon: ReportsIcon,
-      items: [
-        {
-          name: 'Үзлэгийн тайлан',
-          path: '/inspection-answers',
-          icon: AnswersIcon,
-        },
-        {
-          name: 'Засварын тайлан',
-          path: '/repair-answers',
-          icon: AnswersIcon,
-        },
-        {
-          name: 'Суурьлуулалтын тайлан',
-          path: '/installation-report',
-          icon: ReportsIcon,
-        },
-      ],
-      defaultOpen: false,
-    },
-    {
-      name: 'Хэрэглэгч удирдах',
-      icon: UsersIcon,
-      items: [
-        {
-          name: 'Үзлэг томилох',
-          path: '/assign-inspection',
-          icon: AssignIcon,
-        },
-        {
-          name: 'Засвар томилох',
-          path: '/assign-repair',
-          icon: AssignIcon,
-        },
-        {
-          name: 'Суурьлуулалт томилох',
-          path: '/assign-installation',
-          icon: AssignIcon,
-        },
-        {
-          name: 'Баталгаажуулалт томилох',
-          path: '/assign-verification',
-          icon: AssignIcon,
-        },
-        {
-          name: 'Хэрэглэгч удирдах',
-          path: '/users',
-          icon: UsersIcon,
-        },
-      ],
-      defaultOpen: true,
-    },
-    {
-      name: 'Бүртгэл',
-      icon: RegisterIcon,
-      items: [],
-      defaultOpen: false,
-    },
-    {
-      name: 'Үйл ажиллагаа',
-      icon: ActivityIcon,
-      items: [
-        {
-          name: 'Dashboard',
-          path: '/dashboard',
-          icon: DashboardIcon,
-        },
-        {
-          name: '1 сарын тайлан',
-          path: '/monthly-report',
-          icon: ReportsIcon,
-        },
-      ],
-      defaultOpen: false,
-    },
-  ], []);
+  const isActive = (item: MenuItem) => {
+    if (pathname === item.path) return true;
+    return (item.relatedPaths || []).some((prefix) => pathname.startsWith(prefix));
+  };
 
   // Only get user on client side to avoid hydration mismatch
   useEffect(() => {
     setMounted(true);
-    // Use prop if provided, otherwise get from authUtils
     const user = propCurrentUser || authUtils.getUser();
     setCurrentUser(user);
+  }, [propCurrentUser]);
 
-    // Auto-open groups if current path matches any item in the group
-    const newOpenGroups: Record<string, boolean> = {};
-    menuGroups.forEach((group) => {
-      const hasActiveItem = group.items.some((item) => {
-        if (item.path === '/organizations') {
-          const reportPaths = ['/organizations', '/sites', '/contracts', '/device-models', '/devices', '/inspections'];
-          return reportPaths.some(reportPath => pathname === reportPath);
+  // Open the group containing the current page
+  useEffect(() => {
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      MENU.forEach((entry) => {
+        if (entry.kind === 'group' && entry.items.some(isActive)) {
+          next[entry.name] = true;
         }
-        return pathname === item.path;
       });
-      newOpenGroups[group.name] = hasActiveItem || group.defaultOpen || false;
+      return next;
     });
-    setOpenGroups(newOpenGroups);
-  }, [propCurrentUser, pathname]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const handleLogout = () => {
     authUtils.logout();
@@ -278,13 +219,25 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
     }));
   };
 
-  const isActive = (path: string) => {
-    // For "Бүртгэл" group items
-    if (path === '/organizations') {
-      const reportPaths = ['/organizations', '/sites', '/contracts', '/device-models', '/devices', '/inspections'];
-      return reportPaths.some(reportPath => pathname === reportPath);
-    }
-    return pathname === path;
+  const renderItem = (item: MenuItem, indented: boolean) => {
+    const Icon = item.icon;
+    const active = isActive(item);
+    return (
+      <button
+        key={item.path}
+        onClick={() => router.push(item.path)}
+        className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+          indented ? 'pl-9' : ''
+        } ${
+          active
+            ? 'bg-gray-300 text-gray-900'
+            : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
+        }`}
+      >
+        <Icon className={`flex-shrink-0 ${active ? 'text-gray-900' : 'text-gray-500'}`} />
+        <span className="truncate text-left">{item.name}</span>
+      </button>
+    );
   };
 
   return (
@@ -309,90 +262,37 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
       {/* Menu Items */}
       <nav className="flex-1 p-3 overflow-y-auto">
         <div className="space-y-1">
-          {menuGroups.map((group) => {
-            const GroupIcon = group.icon;
-            const isOpen = openGroups[group.name] || false;
-            const hasActiveItem = group.items.some((item) => isActive(item.path));
+          {MENU.map((entry) => {
+            if (entry.kind === 'item') {
+              return renderItem(entry.item, false);
+            }
+
+            const GroupIcon = entry.icon;
+            const isOpen = openGroups[entry.name] || false;
+            const hasActiveItem = entry.items.some(isActive);
 
             return (
-              <div key={group.name} className="mb-2">
-                {/* Group Header - Compact style */}
+              <div key={entry.name}>
                 <button
-                  onClick={() => {
-                    if (group.items.length > 0) {
-                      toggleGroup(group.name);
-                    } else if (group.name === 'Бүртгэл') {
-                      // If "Бүртгэл" group has no items, navigate to organizations
-                      router.push('/organizations');
-                    }
-                  }}
-                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm font-semibold transition-colors ${
-                    hasActiveItem || (group.name === 'Бүртгэл' && pathname === '/organizations')
-                      ? 'bg-gray-300 text-gray-900'
+                  onClick={() => toggleGroup(entry.name)}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm font-semibold transition-colors cursor-pointer ${
+                    hasActiveItem && !isOpen
+                      ? 'bg-gray-200 text-gray-900'
                       : 'text-gray-700 hover:bg-gray-200 hover:text-gray-900'
-                  } cursor-pointer`}
+                  }`}
                 >
                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <GroupIcon
-                      className={`flex-shrink-0 ${
-                        hasActiveItem || (group.name === 'Бүртгэл' && pathname === '/organizations')
-                          ? 'text-gray-900'
-                          : 'text-gray-600'
-                      }`}
-                    />
-                    <span className="truncate">{group.name}</span>
+                    <GroupIcon className="flex-shrink-0 text-gray-600" />
+                    <span className="truncate">{entry.name}</span>
                   </div>
-                  {group.items.length > 0 && (
-                    <ChevronDownIcon
-                      className={`flex-shrink-0 transition-transform duration-200 ${
-                        isOpen ? 'rotate-0' : '-rotate-90'
-                      } ${hasActiveItem ? 'text-gray-900' : 'text-gray-500'}`}
-                    />
-                  )}
+                  <ChevronDownIcon
+                    className={`flex-shrink-0 text-gray-500 ${isOpen ? 'rotate-0' : '-rotate-90'}`}
+                  />
                 </button>
 
-                {/* Group Items - Indented with visual connection */}
                 {isOpen && (
-                  <div className="mt-1 ml-6 space-y-0.5">
-                    {group.items.map((item, index) => {
-                      const Icon = item.icon;
-                      const active = isActive(item.path);
-                      const isLast = index === group.items.length - 1;
-                      
-                      return (
-                        <div key={item.path} className="relative">
-                          {/* Vertical line connector */}
-                          {!isLast && (
-                            <div className="absolute left-2 top-6 bottom-0 w-px bg-gray-300"></div>
-                          )}
-                          {/* Horizontal line connector */}
-                          <div className="absolute left-2 top-3 w-3 h-px bg-gray-300"></div>
-                          
-              <button
-                onClick={() => router.push(item.path)}
-                            className={`relative w-full flex items-center gap-2 pl-6 pr-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  active
-                    ? 'bg-gray-300 text-gray-900'
-                    : 'text-gray-600 hover:bg-gray-200 hover:text-gray-900'
-                }`}
-              >
-                            {/* Dot indicator */}
-                            <div className={`absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full ${
-                              active ? 'bg-gray-900' : 'bg-gray-400'
-                            }`}></div>
-                            
-                <Icon
-                              className={`flex-shrink-0 ${
-                    active
-                      ? 'text-gray-900'
-                                  : 'text-gray-500'
-                              }`}
-                />
-                            <span className="truncate">{item.name}</span>
-              </button>
-                        </div>
-                      );
-                    })}
+                  <div className="mt-1 space-y-0.5">
+                    {entry.items.map((item) => renderItem(item, true))}
                   </div>
                 )}
               </div>
@@ -405,7 +305,7 @@ export default function Sidebar({ currentUser: propCurrentUser }: SidebarProps) 
       <div className="p-3 border-t border-gray-200">
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
         >
           <span className="text-lg">🚪</span>
           <span>Гарах</span>

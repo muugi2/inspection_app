@@ -1,4 +1,4 @@
-# PowerShell script to rebuild admin-web Docker container without cache
+﻿# PowerShell script to rebuild admin-web Docker container without cache
 # This ensures all routes including monthly-report are included
 
 Write-Host "=== Rebuilding admin-web Docker container ===" -ForegroundColor Green
@@ -33,7 +33,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "=== Build complete ===" -ForegroundColor Green
     Write-Host "Check logs with: docker-compose logs -f admin-web" -ForegroundColor Cyan
-    Write-Host "Access at: http://192.168.1.35:3002/monthly-report" -ForegroundColor Cyan
+    Write-Host "Access at: http://192.168.1.54:3002/monthly-report" -ForegroundColor Cyan
 } else {
     Write-Host ""
     Write-Host "=== Build failed ===" -ForegroundColor Red

@@ -373,9 +373,9 @@ export default function DashboardPage() {
       setConfirmAction(null);
       await loadInstallationAssignments();
       setError('');
-      alert(`✅ Суурьлуулалтын үзлэг (${assignmentsToComplete.length} томилолт) амжилттай дууслаа!`);
+      alert(`✅ Суурилуулалтын үзлэг (${assignmentsToComplete.length} томилолт) амжилттай дууслаа!`);
     } catch (err: any) {
-      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Суурьлуулалтын үзлэгийг дуусгахад алдаа гарлаа';
+      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Суурилуулалтын үзлэгийг дуусгахад алдаа гарлаа';
       setError(message);
       alert('❌ ' + message);
     } finally {
@@ -406,9 +406,9 @@ export default function DashboardPage() {
       await loadInstallationAssignments();
       
       setError('');
-      alert(`✅ Суурьлуулалтын үзлэг (${assignmentsToDelete.length} томилолт) амжилттай устгагдлаа!`);
+      alert(`✅ Суурилуулалтын үзлэг (${assignmentsToDelete.length} томилолт) амжилттай устгагдлаа!`);
     } catch (err: any) {
-      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Суурьлуулалтын үзлэгийг устгахад алдаа гарлаа';
+      const message = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Суурилуулалтын үзлэгийг устгахад алдаа гарлаа';
       setError(message);
       alert('❌ ' + message);
     } finally {
@@ -525,13 +525,13 @@ export default function DashboardPage() {
         junctionBoxCount: '',
       });
       await loadInstallationAssignments();
-      alert('✅ Суурьлуулалтын гарчиг/дэлгэрэнгүй мэдээлэл амжилттай шинэчлэгдлээ!');
+      alert('✅ Суурилуулалтын гарчиг/дэлгэрэнгүй мэдээлэл амжилттай шинэчлэгдлээ!');
     } catch (err: any) {
       const message =
         err?.response?.data?.message ||
         err?.response?.data?.error ||
         err.message ||
-        'Суурьлуулалтын мэдээлэл засахад алдаа гарлаа';
+        'Суурилуулалтын мэдээлэл засахад алдаа гарлаа';
       alert('❌ ' + message);
     } finally {
       setIsProcessing(false);
@@ -929,13 +929,13 @@ export default function DashboardPage() {
             <div className="p-6">
               <h3 className="text-lg font-medium text-gray-900 mb-4">
                 {confirmAction.type === 'complete' 
-                  ? confirmAction.itemType === 'installation' ? 'Суурьлуулалтын үзлэг дуусгах' : 'Үзлэг дуусгах'
-                  : confirmAction.itemType === 'installation' ? 'Суурьлуулалтын үзлэг устгах' : 'Үзлэг устгах'}
+                  ? confirmAction.itemType === 'installation' ? 'Суурилуулалтын үзлэг дуусгах' : 'Үзлэг дуусгах'
+                  : confirmAction.itemType === 'installation' ? 'Суурилуулалтын үзлэг устгах' : 'Үзлэг устгах'}
               </h3>
               <p className="text-sm text-gray-500 mb-6">
                 {confirmAction.type === 'complete' 
-                  ? `Та "${confirmAction.title}" ${confirmAction.itemType === 'installation' ? 'суурьлуулалтын үзлэгийг' : 'үзлэгийг'} дуусгахдаа итгэлтэй байна уу?`
-                  : `Та "${confirmAction.title}" ${confirmAction.itemType === 'installation' ? 'суурьлуулалтын үзлэгийг' : 'үзлэгийг'} устгахдаа итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй.`
+                  ? `Та "${confirmAction.title}" ${confirmAction.itemType === 'installation' ? 'суурилуулалтын үзлэгийг' : 'үзлэгийг'} дуусгахдаа итгэлтэй байна уу?`
+                  : `Та "${confirmAction.title}" ${confirmAction.itemType === 'installation' ? 'суурилуулалтын үзлэгийг' : 'үзлэгийг'} устгахдаа итгэлтэй байна уу? Энэ үйлдлийг буцаах боломжгүй.`
                 }
               </p>
               <div className="flex justify-end space-x-3">
@@ -983,7 +983,7 @@ export default function DashboardPage() {
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
             <div className="p-6">
               <h3 className="text-lg font-medium text-gray-900 mb-4">
-                Суурьлуулалтын мэдээлэл засах
+                Суурилуулалтын мэдээлэл засах
               </h3>
               <p className="text-sm text-gray-500 mb-4">
                 Энэ засвар нь “{editInstallation.originalTitle}” бүлгийн {editInstallation.assignmentIds.length} томилолт дээр адилхан үйлчилнэ.
